@@ -1,18 +1,12 @@
 import json
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import socketio
+from config import SESSION_KEY_B
 
-# Initialize Socket.IO Client
 sio = socketio.Client()
-
-# Import Session Key B from the Central Server
-from server import server_engine
-
-session_key_b = bytearray(server_engine.session_key_b)
-
+session_key_b = bytearray(SESSION_KEY_B)
 
 class SimulatedActuatorNode:
-
     def __init__(self, key_b):
         self.key_b = key_b
         self.relay_state = "OFF"
@@ -32,14 +26,11 @@ class SimulatedActuatorNode:
             return True, f"Relay State: {self.relay_state} (Fan Running)"
         return False, "Unknown Command"
 
-
 actuator = SimulatedActuatorNode(session_key_b)
-
 
 @sio.on("connect")
 def on_connect():
     print("[ACTUATOR NODE] Connected and listening for server commands...")
-
 
 @sio.on("execute_actuator_command")
 def on_actuator_command(packet):
@@ -60,11 +51,9 @@ def on_actuator_command(packet):
             },
         )
 
-
 def run_actuator_node():
-    sio.connect("http://localhost:5000")
-    sio.wait()  # Keep process alive to receive commands
-
+    sio.connect("http://127.0.0.1:5000")
+    sio.wait()
 
 if __name__ == "__main__":
     run_actuator_node()

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantum-Safe IoT System Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-white font-sans p-6">
+    <div class="max-w-7xl mx-auto space-y-6">
+        
+        <!-- Header & Connection Status -->
+        <div class="flex justify-between items-center border-b border-gray-700 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold text-indigo-400">Quantum-Safe IoT System Architecture</h1>
+                <p class="text-xs text-gray-400 mt-1">Kyber-768 ML-KEM + AES-256-GCM Telemetry Grid</p>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="conn-badge" class="bg-yellow-600 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-2">
+                    <span id="conn-dot" class="w-2 h-2 rounded-full bg-yellow-200 animate-pulse"></span>
+                    <span id="conn-text">Connecting...</span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Node Status Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Telemetry Display Card -->
+            <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-gray-400 text-sm font-medium">Sensor Node</h2>
+                    <span class="text-xs bg-indigo-900 text-indigo-300 px-2 py-0.5 rounded">AES-256-GCM</span>
+                </div>
+                <p id="temp-display" class="text-3xl font-extrabold text-green-400 mt-3">-- °C</p>
+                <p id="humidity-display" class="text-sm text-gray-400 mt-1">Sensor Reading 2: -- %</p>
+            </div>
+
+            <!-- Central Decision Engine Card with Dynamic Slider -->
+            <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-gray-400 text-sm font-medium">Central Decision Engine</h2>
+                        <span class="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">Active</span>
+                    </div>
+                    <p class="text-xl font-bold text-indigo-300 mt-2">Threshold Trigger</p>
+                </div>
+                <div class="mt-3">
+                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Set Trigger Limit:</span>
+                        <span id="threshold-val" class="font-bold text-indigo-400">30.0 °C</span>
+                    </div>
+                    <input id="threshold-slider" type="range" min="20" max="45" step="0.5" value="30.0" 
+                           class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                           oninput="updateThreshold(this.value)">
+                </div>
+            </div>
+
+            <!-- Actuator Node Card with Manual Override Button -->
+            <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-gray-400 text-sm font-medium">Actuator Node (Relay)</h2>
+                        <span class="text-xs bg-purple-900 text-purple-300 px-2 py-0.5 rounded">Key B Encrypted</span>
+                    </div>
+                    <p id="relay-display" class="text-3xl font-extrabold text-red-500 mt-3">OFF</p>
+                </div>
+                <button onclick="toggleActuatorOverride()" 
+                        class="mt-3 w-full bg-gray-700 hover:bg-gray-600 text-xs font-semibold py-2 px-3 rounded-lg border border-gray-600 transition">
+                    ⚡ Manual Relay Override
+                </button>
+            </div>
+        </div>
+
+        <!-- Interactive Quantum Attack Control Panel -->
+        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
+            <h3 class="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                <span>🎯 Threat Simulation Panel</span>
+                <span class="text-xs text-gray-500 font-normal">(Trigger simulated attack sequences)</span>
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <button onclick="triggerAttack('shor')" 
+                        class="bg-red-900/40 hover:bg-red-800/60 border border-red-700 text-red-300 text-xs font-bold py-2.5 px-4 rounded-lg transition text-left flex justify-between items-center">
+                    <span>1. Classical RSA Crack (Shor's)</span>
+                    <span class="text-xs opacity-70">💥 Test</span>
+                </button>
+                <button onclick="triggerAttack('kyber')" 
+                        class="bg-indigo-900/40 hover:bg-indigo-800/60 border border-indigo-700 text-indigo-300 text-xs font-bold py-2.5 px-4 rounded-lg transition text-left flex justify-between items-center">
+                    <span>2. Kyber-768 Lattice Test</span>
+                    <span class="text-xs opacity-70">🛡️ Test</span>
+                </button>
+                <button onclick="triggerAttack('mitm')" 
+                        class="bg-yellow-900/40 hover:bg-yellow-800/60 border border-yellow-700 text-yellow-300 text-xs font-bold py-2.5 px-4 rounded-lg transition text-left flex justify-between items-center">
+                    <span>3. Inject MITM Packet Tamper</span>
+                    <span class="text-xs opacity-70">⚠️ Test</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Live Chart & Security Terminal -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Telemetry Chart -->
+            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-md font-semibold text-gray-300">Real-Time Sensor Telemetry</h3>
+                    <button onclick="resetChart()" class="text-xs text-gray-400 hover:text-white underline">Clear Chart</button>
+                </div>
+                <canvas id="telemetryChart" class="w-full h-64"></canvas>
+            </div>
+
+            <!-- Quantum Attack & Security Terminal with Controls -->
+            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-md font-semibold text-gray-300">Security & Quantum Attack Monitor</h3>
+                    <div class="flex items-center space-x-2 text-xs">
+                        <button onclick="filterLogs('ALL')" class="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600">All</button>
+                        <button onclick="filterLogs('ATTACK')" class="px-2 py-1 bg-purple-900/80 text-purple-300 rounded hover:bg-purple-800">Attacks</button>
+                        <button onclick="clearTerminal()" class="px-2 py-1 bg-red-900/50 text-red-300 rounded hover:bg-red-800">Clear</button>
+                    </div>
+                </div>
+                <div id="terminal-logs" class="bg-black p-3 rounded-lg font-mono text-xs overflow-y-auto h-64 space-y-1 border border-gray-800">
+                    <p class="text-gray-500">[SYSTEM] Initialization Complete. Awaiting Traffic...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io("http://127.0.0.1:5000");
+
+        // --- Connection Status Handlers ---
+        socket.on('connect', () => {
+            const badge = document.getElementById('conn-badge');
+            const dot = document.getElementById('conn-dot');
+            const text = document.getElementById('conn-text');
+            badge.className = "bg-green-900 text-green-300 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-2 border border-green-700";
+            dot.className = "w-2 h-2 rounded-full bg-green-400 animate-ping";
+            text.innerText = "WebSockets Active";
+        });
+
+        socket.on('disconnect', () => {
+            const badge = document.getElementById('conn-badge');
+            const dot = document.getElementById('conn-dot');
+            const text = document.getElementById('conn-text');
+            badge.className = "bg-red-900 text-red-300 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-2 border border-red-700";
+            dot.className = "w-2 h-2 rounded-full bg-red-500";
+            text.innerText = "Disconnected";
+        });
+
+        // --- Chart Setup ---
+        const ctx = document.getElementById('telemetryChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Sensor Reading 1 (°C)',
+                    data: [],
+                    borderColor: '#6366F1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: false,
+                scales: { 
+                    y: { beginAtZero: false, grid: { color: '#374151' } },
+                    x: { grid: { color: '#374151' } }
+                } 
+            }
+        });
+
+        // --- Socket Listeners ---
+        socket.on('update_telemetry', (data) => {
+            document.getElementById('temp-display').innerText = data.temp + ' °C';
+            document.getElementById('humidity-display').innerText = 'Sensor Reading 2: ' + data.humidity + ' %';
+
+            const now = new Date().toLocaleTimeString();
+            if (chart.data.labels.length > 12) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+            chart.data.labels.push(now);
+            chart.data.datasets[0].data.push(data.temp);
+            chart.update();
+        });
+
+        socket.on('update_actuator_ui', (data) => {
+            const display = document.getElementById('relay-display');
+            display.innerText = data.relay;
+            display.className = data.relay === 'ON' 
+                ? 'text-3xl font-extrabold text-green-400 mt-3 animate-pulse' 
+                : 'text-3xl font-extrabold text-red-500 mt-3';
+        });
+
+        socket.on('security_log', (log) => {
+            appendLog(log.type, log.msg);
+        });
+
+        // --- Interactive Helper Functions ---
+        function appendLog(type, message) {
+            const terminal = document.getElementById('terminal-logs');
+            let color = 'text-green-400';
+            if (type === 'ATTACK') color = 'text-purple-400 font-bold';
+            if (type === 'ERROR') color = 'text-red-500 font-bold';
+            if (type === 'ALERT') color = 'text-yellow-400';
+
+            const p = document.createElement('p');
+            p.className = `${color} log-item`;
+            p.setAttribute('data-type', type);
+            p.innerText = `[${new Date().toLocaleTimeString()}] ${message}`;
+            terminal.appendChild(p);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function triggerAttack(type) {
+            appendLog('ALERT', `[USER TRIGGER] Requesting simulated '${type.toUpperCase()}' attack execution...`);
+            socket.emit('trigger_attack', { attack_type: type });
+        }
+
+        function updateThreshold(val) {
+            document.getElementById('threshold-val').innerText = `${parseFloat(val).toFixed(1)} °C`;
+            socket.emit('set_threshold', { threshold: parseFloat(val) });
+        }
+
+        function toggleActuatorOverride() {
+            appendLog('ALERT', '[USER OVERRIDE] Manual relay state toggle command dispatched.');
+            socket.emit('toggle_actuator_override');
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminal-logs').innerHTML = '';
+        }
+
+        function resetChart() {
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+        }
+
+        function filterLogs(filterType) {
+            const logs = document.querySelectorAll('.log-item');
+            logs.forEach(log => {
+                if (filterType === 'ALL' || log.getAttribute('data-type') === filterType) {
+                    log.style.display = 'block';
+                } else {
+                    log.style.display = 'none';
+                }
+            });
+        }
+    </script>
+</body>
+</html>

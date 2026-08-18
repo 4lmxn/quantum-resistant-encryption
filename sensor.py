@@ -1,17 +1,14 @@
 import json
 import os
 import random
-import time
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import socketio
+from config import SESSION_KEY_A
 
 # Initialize Socket.IO Client
 sio = socketio.Client()
 
-# Import Session Key A from the Central Server
-from server import server_engine
-
-session_key_a = bytearray(server_engine.session_key_a)
+session_key_a = bytearray(SESSION_KEY_A)
 
 
 class SimulatedSensorNode:
@@ -52,14 +49,14 @@ def on_disconnect():
 
 def run_sensor_node():
     sensor = SimulatedSensorNode(session_key_a)
-    sio.connect("http://localhost:5000")
+    sio.connect("http://127.0.0.1:5000")
 
     print("[SENSOR NODE] Streaming telemetry to Central Server...")
     try:
-        while True:
+        while sio.connected:
             packet = sensor.read_dht22_and_encrypt()
             sio.emit("sensor_telemetry_event", packet)
-            time.sleep(4)  # Poll sensor every 4 seconds
+            sio.sleep(4)  # Non-blocking Socket.IO sleep to preserve ping/pong loop
     except KeyboardInterrupt:
         sensor.zeroize_key()
         sio.disconnect()

@@ -4,19 +4,18 @@ import time
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
+from config import SESSION_KEY_A, SESSION_KEY_B, TEMP_THRESHOLD
+
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "quantum_safe_secret_key"
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# --- Central Server Cryptographic Engine ---
 class CentralServer:
-
     def __init__(self):
-        # 256-bit symmetric keys derived via Kyber KEM handshakes
-        self.session_key_a = os.urandom(32)  # Sensor Link Key
-        self.session_key_b = os.urandom(32)  # Actuator Link Key
-        self.temp_threshold = 30.0  # Trigger threshold in °C
+        self.session_key_a = SESSION_KEY_A
+        self.session_key_b = SESSION_KEY_B
+        self.temp_threshold = TEMP_THRESHOLD
 
     def decrypt_sensor_data(self, packet):
         """Decrypts sensor payload using Session Key A."""
@@ -36,14 +35,11 @@ class CentralServer:
         ciphertext = aesgcm.encrypt(nonce, payload, None)
         return {"nonce": nonce.hex(), "ciphertext": ciphertext.hex()}
 
-
 server_engine = CentralServer()
-
 
 @app.route("/")
 def index():
     return render_template("index.html")
-
 
 @socketio.on("sensor_telemetry_event")
 def handle_sensor_telemetry(packet):
@@ -83,11 +79,9 @@ def handle_sensor_telemetry(packet):
             {"type": "ERROR", "msg": f"[SERVER ERROR] Decryption failed: {str(e)}"},
         )
 
-
 @socketio.on("actuator_ack_event")
 def handle_actuator_ack(data):
     socketio.emit("security_log", {"type": "SUCCESS", "msg": f"[SERVER] {data}"})
 
-
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="127.0.0.1", port=5000, debug=False)

@@ -1,12 +1,9 @@
-import json
-import time
 import socketio
 
 sio = socketio.Client()
 
-
 def launch_quantum_attack_sequence():
-    sio.connect("http://localhost:5000")
+    sio.connect("http://127.0.0.1:5000")
 
     # 1. Classical RSA/ECDH Attack Simulation
     sio.emit(
@@ -16,7 +13,7 @@ def launch_quantum_attack_sequence():
             "msg": "[QUANTUM ATTACK 1] Intercepted Classical ECDH Key Exchange...",
         },
     )
-    time.sleep(1)
+    sio.sleep(1)
     sio.emit(
         "security_log",
         {
@@ -24,7 +21,7 @@ def launch_quantum_attack_sequence():
             "msg": "[SHOR'S ALG] Solving Discrete Logarithm on Classical Curve...",
         },
     )
-    time.sleep(1)
+    sio.sleep(1)
     sio.emit(
         "security_log",
         {
@@ -33,7 +30,7 @@ def launch_quantum_attack_sequence():
         },
     )
 
-    time.sleep(2)
+    sio.sleep(2)
 
     # 2. Post-Quantum Kyber Link Attack
     sio.emit(
@@ -43,7 +40,7 @@ def launch_quantum_attack_sequence():
             "msg": "[QUANTUM ATTACK 2] Intercepted Kyber-768 ML-KEM Key Exchange...",
         },
     )
-    time.sleep(1)
+    sio.sleep(1)
     sio.emit(
         "security_log",
         {
@@ -51,7 +48,7 @@ def launch_quantum_attack_sequence():
             "msg": "[BKZ LATTICE REDUCTION] Attempting to solve Module-LWE Problem...",
         },
     )
-    time.sleep(1.5)
+    sio.sleep(1.5)
     sio.emit(
         "security_log",
         {
@@ -60,7 +57,7 @@ def launch_quantum_attack_sequence():
         },
     )
 
-    time.sleep(2)
+    sio.sleep(2)
 
     # 3. Active Man-in-the-Middle Bit-Flipping Attack
     sio.emit(
@@ -70,7 +67,7 @@ def launch_quantum_attack_sequence():
             "msg": "[QUANTUM ATTACK 3] Intercepting Actuator Command Payload...",
         },
     )
-    time.sleep(1)
+    sio.sleep(1)
 
     # Corrupted Payload Simulation
     corrupted_packet = {
@@ -83,9 +80,8 @@ def launch_quantum_attack_sequence():
     )
     sio.emit("execute_actuator_command", corrupted_packet)
 
-    time.sleep(1)
+    sio.sleep(1)
     sio.disconnect()
-
 
 if __name__ == "__main__":
     launch_quantum_attack_sequence()
