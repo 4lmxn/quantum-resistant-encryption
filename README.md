@@ -108,7 +108,9 @@ real DHT22 read and real AES-256-GCM through the ESP32's mbedtls hardware
 crypto, then POSTs to the server's `/telemetry` route.
 
 Runs in the browser on [Wokwi](https://wokwi.com) or on a physical ESP32 —
-identical sketch, two lines changed. See [`wokwi/README.md`](wokwi/README.md).
+identical sketch. [`wokwi/README.md`](wokwi/README.md) has the step-by-step,
+including the free-account route (public gateway + a `cloudflared` tunnel, since
+Wokwi's private gateway is a paid feature).
 
 **The ESP32 does not run the handshake.** It uses a provisioned pre-shared key
 (`DEVICE_PSK`), duplicated in `config.py` and `sketch.ino`. Keeping ML-KEM off

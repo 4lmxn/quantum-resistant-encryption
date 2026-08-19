@@ -11,6 +11,7 @@
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <DHTesp.h>
 #include "mbedtls/gcm.h"
 
@@ -18,9 +19,14 @@
 static const char *WIFI_SSID = "Wokwi-GUEST";
 static const char *WIFI_PASS = "";
 
-// host.wokwi.internal reaches your laptop through the Wokwi IoT Gateway.
-// On real hardware, replace with your machine's LAN IP, e.g. http://192.168.1.7:5001/telemetry
-static const char *TELEMETRY_URL = "http://host.wokwi.internal:5001/telemetry";
+// Pick ONE, depending on how the board reaches your server:
+//
+//  Free Wokwi account  -> expose the server with a tunnel (cloudflared / ngrok)
+//                         and paste the https URL here. Uses the public gateway.
+//  Paid Wokwi Club     -> "http://host.wokwi.internal:5001/telemetry" with the
+//                         private gateway (wokwigw) running on your machine.
+//  Real ESP32 hardware -> your machine's LAN IP, e.g. http://192.168.1.7:5001/telemetry
+static const char *TELEMETRY_URL = "https://REPLACE-ME.trycloudflare.com/telemetry";
 
 // Must be byte-identical to DEVICE_PSK in config.py (32 bytes, AES-256).
 static const uint8_t DEVICE_PSK[32] = {
@@ -130,7 +136,16 @@ void loop() {
            cipherHex);
 
   HTTPClient http;
-  http.begin(TELEMETRY_URL);
+  if (strncmp(TELEMETRY_URL, "https:", 6) == 0) {
+    // setInsecure() skips certificate validation. Acceptable here only because
+    // the payload is already sealed with AES-256-GCM end to end, so TLS is
+    // defence in depth rather than the thing protecting the telemetry.
+    static WiFiClientSecure secureClient;
+    secureClient.setInsecure();
+    http.begin(secureClient, TELEMETRY_URL);
+  } else {
+    http.begin(TELEMETRY_URL);
+  }
   http.addHeader("Content-Type", "application/json");
   int status = http.POST((uint8_t *)body, strlen(body));
 
