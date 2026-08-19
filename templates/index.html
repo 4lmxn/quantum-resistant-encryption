@@ -200,6 +200,7 @@
                         <tr>
                             <th class="text-left py-2 px-2">Node</th>
                             <th class="text-left py-2 px-2">KEM</th>
+                            <th class="text-left py-2 px-2">Transport</th>
                             <th class="text-right py-2 px-2">Public Key</th>
                             <th class="text-right py-2 px-2">KEM Ciphertext</th>
                             <th class="text-right py-2 px-2">AES Key</th>
@@ -209,7 +210,7 @@
                         </tr>
                     </thead>
                     <tbody id="pqc-table">
-                        <tr><td colspan="8" class="text-gray-600 py-3 px-2">No handshakes yet. Start sensor.py or actuator.py.</td></tr>
+                        <tr><td colspan="9" class="text-gray-600 py-3 px-2">No handshakes yet. Start sensor.py or actuator.py.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -345,7 +346,7 @@
                 `${sessions.length} active session${sessions.length === 1 ? '' : 's'}`;
 
             if (sessions.length === 0) {
-                table.innerHTML = '<tr><td colspan="8" class="text-gray-600 py-3 px-2">No handshakes yet. Start sensor.py or actuator.py.</td></tr>';
+                table.innerHTML = '<tr><td colspan="9" class="text-gray-600 py-3 px-2">No handshakes yet. Start sensor.py or actuator.py.</td></tr>';
                 return;
             }
 
@@ -353,6 +354,9 @@
                 <tr class="border-b border-gray-800/50">
                     <td class="py-2 px-2 text-indigo-300">${s.node}</td>
                     <td class="py-2 px-2 text-gray-400">${s.kem}</td>
+                    <td class="py-2 px-2 ${s.transport === 'mqtt' ? 'text-emerald-300' : 'text-gray-500'}">
+                        ${s.transport === 'mqtt' ? 'MQTT / TLS 1.3' : 'WebSocket'}
+                    </td>
                     <td class="py-2 px-2 text-right text-gray-300">${s.public_key_bytes} B</td>
                     <td class="py-2 px-2 text-right text-gray-300">${s.ciphertext_bytes} B</td>
                     <td class="py-2 px-2 text-right text-gray-300">${s.aes_key_bits}-bit</td>

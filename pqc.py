@@ -42,10 +42,17 @@ def decapsulate(decapsulation_key, kem_ciphertext, link_label):
 
 
 def _derive_aes_key(shared_secret, link_label):
-    """HKDF-SHA256 to exactly 32 bytes, so an AES-256 key is never the wrong length."""
+    """Two-stage KDF: SHAKE-256 extract, then HKDF-SHA256 expand.
+
+    SHAKE-256 is the same XOF family ML-KEM uses internally, and absorbing the
+    shared secret together with the link label binds the key to the leg it
+    belongs to before expansion. HKDF then expands to exactly 32 bytes, so an
+    AES-256 key can never come out the wrong length.
+    """
+    extracted = hashlib.shake_256(shared_secret + link_label).digest(32)
     return HKDF(
         algorithm=hashes.SHA256(), length=32, salt=None, info=link_label
-    ).derive(shared_secret)
+    ).derive(extracted)
 
 
 def key_fingerprint(aes_key):

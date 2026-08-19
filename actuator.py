@@ -1,9 +1,12 @@
+import argparse
 import json
+import os
+import time
 
 import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from config import SERVER_URL
+from config import SERVER_URL, TOPIC_COMMAND, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY
 from pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
@@ -123,5 +126,59 @@ def run_actuator_node():
         sio.disconnect()
 
 
+def run_actuator_node_mqtt():
+    """Same node, same GCM tag check — carried over MQTT with TLS 1.3."""
+    from mqtt_transport import MqttLink
+
+    node_id = f"actuator-{os.getpid()}"
+    link = MqttLink(node_id)
+
+    def on_public_key(topic, payload):
+        kem_ciphertext = actuator.establish_session(
+            bytes.fromhex(payload["encapsulation_key"])
+        )
+        link.publish(
+            f"{TOPIC_ENCAPS}/{node_id}",
+            {
+                "kem_ciphertext": kem_ciphertext.hex(),
+                "key_fingerprint": key_fingerprint(bytes(actuator.key_b)),
+            },
+        )
+        print("[ACTUATOR NODE] Session Key B derived (ML-KEM-768 over MQTT/TLS).")
+
+    def on_command(topic, packet):
+        if actuator.key_b is None:
+            print("[ACTUATOR REJECTED] No session key established.")
+            return
+        try:
+            success, msg = actuator.process_command(packet)
+            print(f"[ACTUATOR] {msg} (AES Tag Verified)" if success
+                  else f"[ACTUATOR REJECTED] {msg}")
+        except Exception as exc:
+            print(f"[ACTUATOR REJECTED] Tag Mismatch / Tampering Detected ({type(exc).__name__})")
+
+    link.subscribe(f"{TOPIC_PUBKEY}/{node_id}", on_public_key)
+    link.subscribe(f"{TOPIC_COMMAND}/{node_id}", on_command)
+    link.connect()
+    print(f"[ACTUATOR NODE] Connected over MQTT, TLS {link.tls_version()}.")
+    link.publish(TOPIC_HELLO, {"node_id": node_id, "role": "actuator"})
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        actuator.zeroize_key()
+        link.disconnect()
+
+
 if __name__ == "__main__":
-    run_actuator_node()
+    parser = argparse.ArgumentParser(description="Post-quantum IoT actuator node")
+    parser.add_argument("--transport", choices=["socketio", "mqtt"], default="socketio",
+                        help="mqtt uses MQTT over TLS 1.3 and needs broker.py running")
+    args = parser.parse_args()
+    if args.transport == "mqtt":
+        run_actuator_node_mqtt()
+    else:
+        run_actuator_node()

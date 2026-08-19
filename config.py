@@ -14,3 +14,15 @@ TEMP_THRESHOLD = 30.0
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5001
 SERVER_URL = "http://127.0.0.1:5001"
+
+# MQTT transport (report §3.1: MQTT over TLS 1.3). The Socket.IO path above
+# still serves the browser dashboard, which is a UI client, not an IoT node.
+MQTT_HOST = "127.0.0.1"
+MQTT_TLS_PORT = 8883
+MQTT_CA_CERT = "certs/ca.crt"
+
+TOPIC_HELLO = "iot/handshake/hello"
+TOPIC_PUBKEY = "iot/handshake/pubkey"      # + /<node_id>
+TOPIC_ENCAPS = "iot/handshake/encaps"      # + /<node_id>
+TOPIC_TELEMETRY = "iot/telemetry"          # + /<node_id>
+TOPIC_COMMAND = "iot/command"              # + /<node_id>

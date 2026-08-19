@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import time
@@ -38,7 +39,7 @@ class CentralServer:
         self.pending_handshakes[sid] = (role, decapsulation_key)
         return encapsulation_key
 
-    def complete_handshake(self, sid, kem_ciphertext, node_fingerprint):
+    def complete_handshake(self, sid, kem_ciphertext, node_fingerprint, transport="socketio"):
         role, decapsulation_key = self.pending_handshakes.pop(sid)
         label = LINK_SENSOR if role == "sensor" else LINK_ACTUATOR
         session_key = decapsulate(decapsulation_key, kem_ciphertext, label)
@@ -49,7 +50,8 @@ class CentralServer:
         # reached the same key without putting any key material on the wire.
         server_fingerprint = key_fingerprint(session_key)
         self.sessions[sid] = {
-            "node": f"{role}@{sid[:6]}",
+            # MQTT node ids already carry the role; Socket.IO sids do not.
+            "node": sid if transport == "mqtt" else f"{role}@{sid[:8]}",
             "role": role,
             "kem": "ML-KEM-768",
             "public_key_bytes": ENCAPSULATION_KEY_BYTES,
@@ -58,6 +60,7 @@ class CentralServer:
             "server_fingerprint": server_fingerprint,
             "node_fingerprint": node_fingerprint,
             "agreed": node_fingerprint == server_fingerprint,
+            "transport": transport,
         }
         return role
 
@@ -86,6 +89,7 @@ class CentralServer:
 
 
 server_engine = CentralServer()
+mqtt_bridge = None  # set by --mqtt at startup
 
 
 def log(log_type, msg):
@@ -141,15 +145,23 @@ def process_telemetry(data, source, packet=None):
 
 def send_actuator_command(command_str):
     """Seals one command per actuator, each under that actuator's own session key."""
-    for actuator_sid, actuator_key in server_engine.actuator_keys.items():
+    for actuator_sid, actuator_key in list(server_engine.actuator_keys.items()):
         cmd_packet = server_engine.encrypt_actuator_command(actuator_key, command_str)
-        socketio.emit("execute_actuator_command", cmd_packet, to=actuator_sid)
+        _dispatch_to_actuator(actuator_sid, cmd_packet)
+
+
+def _dispatch_to_actuator(actuator_sid, packet):
+    record = server_engine.sessions.get(actuator_sid, {})
+    if record.get("transport") == "mqtt" and mqtt_bridge is not None:
+        mqtt_bridge.send_command(packet, actuator_sid)
+    else:
+        socketio.emit("execute_actuator_command", packet, to=actuator_sid)
 
 
 def deliver_raw_to_actuators(packet):
     """Forwards an attacker-supplied packet verbatim, so the GCM tag is the only defence."""
-    for actuator_sid in server_engine.actuator_keys:
-        socketio.emit("execute_actuator_command", packet, to=actuator_sid)
+    for actuator_sid in list(server_engine.actuator_keys):
+        _dispatch_to_actuator(actuator_sid, packet)
 
 
 def server_side_public_key():
@@ -302,5 +314,31 @@ def handle_disconnect(reason=None):
         broadcast_pqc_status()
 
 
+def start_mqtt_bridge():
+    """Brings up the MQTT over TLS leg alongside Socket.IO."""
+    global mqtt_bridge
+    from mqtt_bridge import MqttBridge
+
+    mqtt_bridge = MqttBridge(
+        engine=server_engine,
+        log=log,
+        on_telemetry=process_telemetry,
+        broadcast_status=broadcast_pqc_status,
+    ).start()
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Post-quantum IoT central server")
+    parser.add_argument("--mqtt", action="store_true",
+                        help="also accept nodes over MQTT/TLS 1.3 (needs broker.py)")
+    args = parser.parse_args()
+
+    if args.mqtt:
+        try:
+            start_mqtt_bridge()
+            print(f"[SERVER] MQTT over TLS leg active.")
+        except Exception as exc:
+            # The Socket.IO demo must survive a missing broker.
+            print(f"[SERVER] MQTT bridge unavailable ({exc}). Socket.IO only.")
+
     socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, debug=False, allow_unsafe_werkzeug=True)

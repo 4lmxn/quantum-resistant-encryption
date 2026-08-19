@@ -1,11 +1,13 @@
+import argparse
 import json
 import os
 import random
+import time
 
 import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from config import SERVER_URL
+from config import SERVER_URL, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY, TOPIC_TELEMETRY
 from pqc import LINK_SENSOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
@@ -105,5 +107,53 @@ def run_sensor_node():
         sio.disconnect()
 
 
+def run_sensor_node_mqtt():
+    """Same node, same crypto — carried over MQTT with TLS 1.3 instead."""
+    from mqtt_transport import MqttLink
+
+    node_id = f"sensor-{os.getpid()}"
+    link = MqttLink(node_id)
+    established = {"ready": False}
+
+    def on_public_key(topic, payload):
+        kem_ciphertext = sensor.establish_session(
+            bytes.fromhex(payload["encapsulation_key"])
+        )
+        link.publish(
+            f"{TOPIC_ENCAPS}/{node_id}",
+            {
+                "kem_ciphertext": kem_ciphertext.hex(),
+                "key_fingerprint": key_fingerprint(bytes(sensor.key_a)),
+            },
+        )
+        established["ready"] = True
+        print("[SENSOR NODE] Session Key A derived (ML-KEM-768 over MQTT/TLS).")
+
+    link.subscribe(f"{TOPIC_PUBKEY}/{node_id}", on_public_key)
+    link.connect()
+    print(f"[SENSOR NODE] Connected over MQTT, TLS {link.tls_version()}.")
+    link.publish(TOPIC_HELLO, {"node_id": node_id, "role": "sensor"})
+
+    try:
+        while True:
+            if established["ready"]:
+                link.publish(
+                    f"{TOPIC_TELEMETRY}/{node_id}", sensor.read_dht22_and_encrypt()
+                )
+            time.sleep(4)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sensor.zeroize_key()
+        link.disconnect()
+
+
 if __name__ == "__main__":
-    run_sensor_node()
+    parser = argparse.ArgumentParser(description="Post-quantum IoT sensor node")
+    parser.add_argument("--transport", choices=["socketio", "mqtt"], default="socketio",
+                        help="mqtt uses MQTT over TLS 1.3 and needs broker.py running")
+    args = parser.parse_args()
+    if args.transport == "mqtt":
+        run_sensor_node_mqtt()
+    else:
+        run_sensor_node()

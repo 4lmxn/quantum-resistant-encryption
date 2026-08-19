@@ -16,6 +16,7 @@ standardised form of CRYSTALS-Kyber). The data channels are **AES-256-GCM**.
 
 | Layer | Algorithm | Quantum threat | Status |
 |---|---|---|---|
+| Transport | MQTT over TLS 1.3 | — | Tunnel only; payloads sealed independently |
 | Key exchange | ML-KEM-768 | Shor's algorithm breaks RSA/ECDH outright | Module-LWE has no known quantum attack |
 | Bulk encryption | AES-256-GCM | Grover's algorithm halves the search space | 256-bit key → 128-bit effective, still infeasible |
 | Message integrity | GCM authentication tag | — | Forged packets rejected before they reach the relay |
@@ -127,6 +128,9 @@ pre-shared key in the system.
 | `attacks.py` | Attack stages, shared by the CLI and the dashboard buttons |
 | `attack.py` | CLI runner for the attack sequence |
 | `device_sim.py` | ESP32 stand-in — the constrained leg without hardware |
+| `broker.py` | Pure-Python MQTT broker with TLS 1.3 |
+| `mqtt_transport.py` / `mqtt_bridge.py` | MQTT node transport and server-side leg |
+| `make_certs.sh` | Self-signed CA and broker certificate |
 | `config.py` | Threshold, network config, ESP32 pre-shared key |
 | `templates/index.html` | Dashboard |
 | `wokwi/` | ESP32 firmware and wiring |
