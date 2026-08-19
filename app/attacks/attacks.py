@@ -26,52 +26,71 @@ ATTACK_CATALOG = {
         "family": "Quantum cryptanalysis",
         "severity": "CRITICAL",
         "target": "Key exchange — both channels",
-        "vector": "Polynomial-time integer factorisation and discrete logarithm on a "
-                  "fault-tolerant quantum computer.",
-        "impact": "Full recovery of RSA and ECDH private keys, exposing every session "
-                  "key derived from them and all traffic they protect.",
-        "mitigation": "Key exchange uses ML-KEM-768, whose security rests on Module-LWE "
-                      "rather than factorisation.",
+        "vector": "Today's internet keys are built from two large prime numbers "
+                  "multiplied together. Security rests on nobody being able to work "
+                  "backwards and find those primes. A quantum computer running Shor's "
+                  "algorithm can, which breaks RSA and elliptic-curve key exchange.",
+        "impact": "Whoever recovers the private key can read every message that key "
+                  "ever protected — including traffic recorded years earlier and stored "
+                  "until the hardware caught up.",
+        "mitigation": "This system agrees its keys with ML-KEM-768 instead. Its security "
+                      "rests on a lattice problem rather than on factoring, and Shor's "
+                      "algorithm gives no advantage against it.",
     },
     "kyber": {
         "name": "Lattice Reduction (BKZ)",
         "family": "Quantum cryptanalysis",
         "severity": "CRITICAL",
         "target": "ML-KEM-768 key encapsulation",
-        "vector": "Basis reduction against the Module-LWE instance underlying the "
-                  "encapsulation key.",
-        "impact": "Recovery of the decapsulation key would compromise every session "
-                  "negotiated with it.",
-        "mitigation": "ML-KEM-768 carries a 2^181 classical security margin and no known "
-                      "quantum attack better than generic search.",
+        "vector": "The best known attack on ML-KEM. It treats the public key as a grid "
+                  "of points and tries to shorten the grid until the hidden secret is "
+                  "exposed. This is what BKZ reduction does to the Module-LWE problem.",
+        "impact": "Recovering the private half of the key would expose every session "
+                  "negotiated with it, on both the sensor and the actuator link.",
+        "mitigation": "ML-KEM-768 is sized so this search is far beyond reach: roughly "
+                      "2^181 operations classically, and no quantum method is known that "
+                      "does meaningfully better.",
     },
     "harvest": {
         "name": "Harvest Now, Decrypt Later",
         "family": "Passive interception",
         "severity": "HIGH",
         "target": "Recorded ciphertext, both channels",
-        "vector": "Archive traffic today, decrypt once quantum hardware matures.",
-        "impact": "Retrospective disclosure of all historical telemetry and commands.",
-        "mitigation": "A fresh ML-KEM keypair per session with key zeroization on "
-                      "disconnect, so no long-lived key exists to recover.",
+        "vector": "The attacker does not try to break anything today. They simply record "
+                  "the encrypted traffic and store it, waiting for a quantum computer "
+                  "capable of opening it later.",
+        "impact": "Everything sent today would become readable in future — the reason "
+                  "post-quantum protection is needed now rather than when the hardware "
+                  "arrives.",
+        "mitigation": "Every connection negotiates a brand new key, and nodes wipe the "
+                      "old one when they disconnect. There is no long-lived key to come "
+                      "back and recover.",
     },
     "mitm": {
         "name": "Man-in-the-Middle Command Injection",
         "family": "Active tampering",
         "severity": "CRITICAL",
         "target": "Actuator command channel",
-        "vector": "Injection of a forged ciphertext into the server-to-actuator path.",
-        "impact": "Unauthorised physical actuation — a relay driven by an attacker.",
-        "mitigation": "AES-256-GCM authentication tag verified before the actuator acts.",
+        "vector": "The attacker sits on the network and sends the actuator a command the "
+                  "server never issued, hoping it will simply obey.",
+        "impact": "Physical hardware operated by an outsider. On a real installation that "
+                  "is a valve, a lock or a motor moving on command.",
+        "mitigation": "Every command carries an authentication tag computed with the "
+                      "session key. The actuator checks that tag before acting, so a "
+                      "forged command is discarded rather than executed.",
     },
     "grover": {
         "name": "Grover's Algorithm",
         "family": "Quantum cryptanalysis",
         "severity": "MEDIUM",
         "target": "AES session keys, both channels",
-        "vector": "Quantum unstructured search, reducing an n-bit key to n/2 effective bits.",
-        "impact": "AES-128 would fall to a 2^64 margin, within reach of a sustained attack.",
-        "mitigation": "AES-256 retains a 2^128 effective margin under Grover.",
+        "vector": "Rather than breaking the maths, this simply searches for the key — but "
+                  "a quantum computer searches far faster, effectively halving the key "
+                  "length.",
+        "impact": "A 128-bit key would be reduced to the strength of a 64-bit one, which "
+                  "is genuinely within reach of a determined attacker.",
+        "mitigation": "This system uses 256-bit keys, so halving still leaves 128 bits of "
+                      "strength — well beyond any foreseeable machine.",
     },
 }
 
@@ -97,10 +116,10 @@ def stage_classical(log, sleep, report, intercept):
             "shor",
             status="NOT APPLICABLE",
             confidence="Observed",
-            evidence="No RSA or ECDH key exchange was observed. Every active channel "
-                     "uses ML-KEM-768.",
-            outcome="Start a legacy node to see this attack succeed: "
-                    "python -m app.nodes.sensor --legacy",
+            evidence="Nothing to attack. Every channel currently running uses "
+                     "post-quantum key exchange, so there is no RSA key to factor.",
+            outcome="To see this attack succeed, start the old-style channel alongside: "
+                    "make sensor-legacy",
         )
         return
 
@@ -133,14 +152,15 @@ def stage_classical(log, sleep, report, intercept):
         "shor",
         status="SUCCEEDED",
         confidence="Observed",
-        evidence=f"Factored the RSA-{public[0].bit_length()} modulus in "
-                 f"{elapsed * 1000:.1f} ms ({p_factor} x {q_factor}), recovered the "
-                 f"transported session key {session_key.hex()[:32]}..., and decrypted "
-                 f"intercepted telemetry to: {plaintext}",
-        outcome="The classical channel is fully compromised from passive interception "
-                "alone. Factorisation is shown here at a reduced key size; Shor's "
-                "algorithm achieves the same against RSA-2048 on a quantum computer. "
-                "The ML-KEM-768 channels are unaffected.",
+        evidence=f"Found the two primes behind the {public[0].bit_length()}-bit key in "
+                 f"{elapsed * 1000:.1f} ms ({p_factor} x {q_factor}). That gave up the "
+                 f"session key ({session_key.hex()[:32]}...), which decrypted a real "
+                 f"intercepted reading: {plaintext}",
+        outcome="This channel is fully readable to anyone who was listening — no "
+                "tampering or access required, just a recording. The key here is small "
+                "so the break finishes instantly; against a real 2048-bit key a quantum "
+                "computer running Shor's algorithm does the same job. The post-quantum "
+                "channels running alongside were unaffected.",
     )
 
 
@@ -185,12 +205,14 @@ def stage_lattice(log, sleep, report, obtain_public_key):
         "kyber",
         status="DEFENDED",
         confidence="Observed",
-        evidence=f"Captured a real {len(encapsulation_key)}-byte encapsulation key. Two "
-                 f"encapsulations produced unrelated secrets ({first_secret[:8].hex()} vs "
-                 f"{second_secret[:8].hex()}). Module-LWE recovery abandoned after "
+        evidence=f"Captured the real {len(encapsulation_key)}-byte public key off the "
+                 f"wire. Using it twice produced two completely unrelated secrets "
+                 f"({first_secret[:8].hex()} and {second_secret[:8].hex()}), so it gives "
+                 f"away nothing about the live session. Key search abandoned after "
                  f"{elapsed:.2f}s.",
-        outcome="The public key alone yields no session key. Recovering the decapsulation "
-                "key is a Module-LWE problem with no known feasible attack.",
+        outcome="Holding the public key is not enough — it does not reveal the session "
+                "key, and working backwards to the private half is the lattice problem "
+                "with no practical attack known.",
     )
 
 
@@ -223,11 +245,11 @@ def stage_harvest(log, sleep, report, obtain_public_key):
         "harvest",
         status="DEFENDED",
         confidence="Observed",
-        evidence=f"Two consecutive handshakes produced unrelated encapsulation keys "
-                 f"({first[:8].hex()} vs {second[:8].hex()}). Nodes zeroize the session "
-                 f"key on disconnect.",
-        outcome="No long-lived key exists. A key recovered in future decrypts nothing "
-                "recorded today.",
+        evidence=f"Two connections in a row produced completely different keys "
+                 f"({first[:8].hex()} and {second[:8].hex()}), and nodes erase the key "
+                 f"from memory when they disconnect.",
+        outcome="There is no single key worth waiting for. Breaking one connection's key "
+                "in future would open that connection only — not the recording.",
     )
 
 
@@ -244,10 +266,11 @@ def stage_grover(log, sleep, report):
         "grover",
         status="DEFENDED",
         confidence="Analytical",
-        evidence="Session keys are 256-bit (verified in the Key Exchange tab). Grover "
-                 "reduces this to a 2^128 effective search.",
-        outcome="AES-128 would be reduced to 2^64 and is inadequate. AES-256 retains a "
-                "2^128 margin, which remains computationally infeasible.",
+        evidence="The live session keys are 256-bit — visible in the Key exchange tab. "
+                 "Halving that leaves 128 bits of effective strength.",
+        outcome="A 128-bit key would not survive this, which is why the design specifies "
+                "256-bit. At that size the search stays out of reach even for a quantum "
+                "computer.",
     )
 
 
@@ -266,11 +289,12 @@ def stage_mitm(log, sleep, report, deliver):
         "mitm",
         status="DEFENDED",
         confidence="Observed",
-        evidence=f"Forged packet delivered to the actuator (nonce {forged['nonce']}, "
-                 f"{len(forged['ciphertext']) // 2} byte payload). GCM tag verification "
-                 f"raised InvalidTag; the relay did not change state.",
-        outcome="Tampered commands are rejected before actuation. The relay never acts on "
-                "an unauthenticated packet.",
+        evidence=f"A forged command was delivered to the actuator "
+                 f"({len(forged['ciphertext']) // 2} bytes). Its authentication tag did "
+                 f"not check out, and the relay did not move.",
+        outcome="The forged command was thrown away before anything physical happened. "
+                "Detection is not enough on its own — what matters is that it was caught "
+                "before the relay acted.",
     )
 
 

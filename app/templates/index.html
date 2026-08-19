@@ -226,8 +226,9 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
       <div class="head"><h2>Finding</h2><span class="hint" id="finding-time"></span></div>
       <div class="body finding" id="finding" role="region" aria-live="polite" aria-label="Attack finding detail">
         <p class="empty">Select an attack on the left, or press 1–5.<br><br>
-           The full finding appears here: severity, target, detection status, evidence
-           collected during the run, and the mitigation that applies.</p>
+           Each one runs against the live system and reports what actually happened:
+           how the attack works, what it would cost, what we observed, and what
+           stopped it.</p>
       </div>
     </section>
 
@@ -337,15 +338,15 @@ function render(id) {
       <span class="st-NOT">${f.confidence}</span>
     </div>
     <dl>
-      <dt>Attack family</dt><dd>${f.family}</dd>
-      <dt>Target</dt><dd>${f.target}</dd>
-      <dt>Detected at</dt><dd class="mono">${f.detected_at}</dd>
+      <dt>Type</dt><dd>${f.family}</dd>
+      <dt>What it targets</dt><dd>${f.target}</dd>
+      <dt>Run at</dt><dd class="mono">${f.detected_at}</dd>
     </dl>
-    <div class="block"><h3>Attack vector</h3><p>${f.vector}</p></div>
-    <div class="block"><h3>Potential impact</h3><p>${f.impact}</p></div>
-    <div class="block"><h3>Evidence collected</h3><p>${f.evidence}</p></div>
-    <div class="block"><h3>Outcome</h3><p>${f.outcome}</p></div>
-    <div class="block"><h3>Mitigation in place</h3><p>${f.mitigation}</p></div>`;
+    <div class="block"><h3>How the attack works</h3><p>${f.vector}</p></div>
+    <div class="block"><h3>What it would cost us</h3><p>${f.impact}</p></div>
+    <div class="block"><h3>What we observed just now</h3><p>${f.evidence}</p></div>
+    <div class="block"><h3>Result</h3><p>${f.outcome}</p></div>
+    <div class="block"><h3>What stops it here</h3><p>${f.mitigation}</p></div>`;
 }
 
 socket.on('attack_result', f => {
