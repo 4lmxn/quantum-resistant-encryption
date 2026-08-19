@@ -3,25 +3,123 @@
   "author": "Quantum-Resistant IoT",
   "editor": "wokwi",
   "parts": [
-    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
-    { "type": "wokwi-dht22", "id": "dht1", "top": -80, "left": 200, "attrs": {} },
-    { "type": "wokwi-relay-module", "id": "relay1", "top": 100, "left": 200, "attrs": {} },
-    { "type": "wokwi-led", "id": "led1", "top": 200, "left": 100,
-      "attrs": { "color": "red", "label": "FAN" } },
-    { "type": "wokwi-resistor", "id": "r1", "top": 250, "left": 100, "attrs": { "value": "220" } }
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": -80,
+      "left": 200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "relay1",
+      "top": 100,
+      "left": 200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 200,
+      "left": 100,
+      "attrs": {
+        "color": "red",
+        "label": "FAN"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 250,
+      "left": 100,
+      "attrs": {
+        "value": "220"
+      }
+    }
   ],
   "connections": [
-    [ "esp:3V3", "dht1:VCC", "red", [ "v0" ] ],
-    [ "esp:GND.1", "dht1:GND", "black", [ "v0" ] ],
-    [ "esp:15", "dht1:SDA", "green", [ "v0" ] ],
-
-    [ "esp:VIN", "relay1:VCC", "red", [ "v0" ] ],
-    [ "esp:GND.2", "relay1:GND", "black", [ "v0" ] ],
-    [ "esp:26", "relay1:IN", "blue", [ "v0" ] ],
-
-    [ "esp:27", "r1:1", "green", [ "v0" ] ],
-    [ "r1:2", "led1:A", "green", [ "v0" ] ],
-    [ "led1:C", "esp:GND.3", "black", [ "v0" ] ]
+    [
+      "esp:3V3",
+      "dht1:VCC",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:GND.1",
+      "dht1:GND",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:15",
+      "dht1:SDA",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:VIN",
+      "relay1:VCC",
+      "red",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:GND.2",
+      "relay1:GND",
+      "black",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:26",
+      "relay1:IN",
+      "blue",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "esp:27",
+      "r1:1",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "r1:2",
+      "led1:A",
+      "green",
+      [
+        "v0"
+      ]
+    ],
+    [
+      "led1:C",
+      "esp:GND.3",
+      "black",
+      [
+        "v0"
+      ]
+    ]
   ],
-  "dependencies": {}
+  "dependencies": {},
+  "serialMonitor": {
+    "display": "always"
+  }
 }
