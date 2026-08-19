@@ -2,14 +2,14 @@
 Socket.IO handlers, but over MQTT topics. Started by server.py --mqtt.
 """
 
-from config import (
+from app.config import (
     TOPIC_COMMAND,
     TOPIC_ENCAPS,
     TOPIC_HELLO,
     TOPIC_PUBKEY,
     TOPIC_TELEMETRY,
 )
-from mqtt_transport import MqttLink
+from app.transport.mqtt_transport import MqttLink
 
 
 class MqttBridge:

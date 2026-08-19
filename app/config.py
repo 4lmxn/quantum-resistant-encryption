@@ -1,3 +1,5 @@
+import pathlib
+
 # config.py
 
 # Sensor and actuator session keys are NOT set here any more. They are agreed
@@ -19,7 +21,10 @@ SERVER_URL = "http://127.0.0.1:5001"
 # still serves the browser dashboard, which is a UI client, not an IoT node.
 MQTT_HOST = "127.0.0.1"
 MQTT_TLS_PORT = 8883
-MQTT_CA_CERT = "certs/ca.crt"
+# Absolute, so every entry point resolves them the same way regardless of cwd.
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+CERT_DIR = PROJECT_ROOT / "certs"
+MQTT_CA_CERT = str(CERT_DIR / "ca.crt")
 
 TOPIC_HELLO = "iot/handshake/hello"
 TOPIC_PUBKEY = "iot/handshake/pubkey"      # + /<node_id>

@@ -14,17 +14,17 @@ channels are AES-256-GCM.
 
 ```bash
 pip install -r requirements.txt
-python server.py     # terminal 1 — dashboard at http://127.0.0.1:5001
-python sensor.py     # terminal 2 — handshake, then telemetry every 4s
-python actuator.py   # terminal 3 — handshake, then waits for FAN_ON
-python attack.py     # terminal 4 — one-shot 3-stage attack, then exits
-python test_pqc.py         # crypto self-check, no server needed
-python test_device_leg.py  # ESP32 wire-format check, server must be running
+make server     # terminal 1 — dashboard at http://127.0.0.1:5001
+make sensor     # terminal 2 — handshake, then telemetry every 4s
+make actuator   # terminal 3 — handshake, then waits for FAN_ON
+make attack     # terminal 4 — one-shot 3-stage attack, then exits
+make test         # crypto self-check, no server needed
+make test-device  # ESP32 wire-format check, server must be running
 ```
 
 **Port 5001, not 5000** — macOS AirPlay Receiver squats on 5000 and answers
 handshakes with a 403 that looks like a CORS bug. Host/port/URL live in
-`config.py` only; the dashboard uses same-origin `io()` and hardcodes nothing.
+`app/config.py` only; the dashboard uses same-origin `io()` and hardcodes nothing.
 
 ## Architecture
 
@@ -59,7 +59,7 @@ fallback — the visible rejection *is* the feature.
 A Socket.IO client emit only reaches the server. Nodes therefore send
 `relay_log` / `relay_actuator_ui`, and the server re-broadcasts them as
 `security_log` / `update_actuator_ui`. **Any new dashboard control or node
-message needs a matching `@socketio.on` handler in `server.py` or it vanishes
+message needs a matching `@socketio.on` handler in `app/server.py` or it vanishes
 silently.** All current controls are wired: `set_threshold`, `trigger_attack`,
 `toggle_actuator_override`.
 
@@ -77,10 +77,10 @@ reintroduce a default branch here.
 
 ### attacks.py / attack.py
 
-Stage logic lives in `attacks.py` and takes plumbing callables (`log`, `sleep`,
+Stage logic lives in `app/attacks/attacks.py` and takes plumbing callables (`log`, `sleep`,
 `obtain_public_key`, `deliver`) so the CLI runner and the dashboard buttons run
-one implementation rather than two that drift. `attack.py` supplies Socket.IO
-client plumbing; `server.py` supplies in-process plumbing and runs stages in a
+one implementation rather than two that drift. `app/attacks/attack.py` supplies Socket.IO
+client plumbing; `app/server.py` supplies in-process plumbing and runs stages in a
 background task so the stage sleeps never block the event loop.
 
 Stage 1 is narration — there is no classical ECDH in this system to break, so
@@ -100,23 +100,23 @@ ciphertext; the server compares it with its own and shows both. Fingerprints are
 one-way, so this proves agreement without putting key material on the wire —
 never replace them with the key itself.
 
-`device_sim.py` is the ESP32 stand-in and shares the wire format with
-`wokwi/sketch.ino`. Changing one means changing the other.
+`app/nodes/device_sim.py` is the ESP32 stand-in and shares the wire format with
+`firmware/sketch.ino`. Changing one means changing the other.
 
 ## The ESP32 leg
 
-`wokwi/` holds firmware, wiring and instructions. The board does a real DHT22
+`firmware/` holds firmware, wiring and instructions. The board does a real DHT22
 read and real AES-256-GCM via mbedtls, then POSTs to `/telemetry` — one HTTP
 route rather than teaching a microcontroller Socket.IO.
 
 It does **not** run the handshake. It uses `DEVICE_PSK`, a provisioned key
-duplicated in `config.py` and `sketch.ino`; the two must match byte for byte.
+duplicated in `app/config.py` and `sketch.ino`; the two must match byte for byte.
 This is the one remaining pre-shared key in the system and the accepted
 trade-off for keeping ML-KEM off the microcontroller.
 
 ## Conventions
 
-- Session keys are never module constants. They come from `pqc.py` and live in
+- Session keys are never module constants. They come from `app/pqc.py` and live in
   per-sid dicts on the server, or in a node's `bytearray` so `zeroize_key()` can
   overwrite in place.
 - Every `security_log` payload is `{"type": ..., "msg": ...}` with type in

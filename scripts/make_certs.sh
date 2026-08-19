@@ -3,7 +3,7 @@
 # Self-signed is fine here: this demonstrates the transport-layer tunnel, and
 # the payloads inside it are independently sealed with AES-256-GCM anyway.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 mkdir -p certs && cd certs
 
 # basicConstraints and keyUsage are mandatory: OpenSSL 3.x refuses to verify

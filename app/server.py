@@ -7,9 +7,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
-import attacks
-from config import DEVICE_PSK, SERVER_HOST, SERVER_PORT, TEMP_THRESHOLD
-from pqc import (
+from app.attacks import attacks
+from app.config import DEVICE_PSK, SERVER_HOST, SERVER_PORT, TEMP_THRESHOLD
+from app.pqc import (
     ENCAPSULATION_KEY_BYTES,
     KEM_CIPHERTEXT_BYTES,
     LINK_ACTUATOR,
@@ -120,6 +120,8 @@ def process_telemetry(data, source, packet=None):
             "humidity": data["humidity"],
             "status": "SECURE_ML_KEM_768",
             "source": source,
+            # A dashboard that opens mid-run must not show a stale limit.
+            "threshold": server_engine.temp_threshold,
             "wire": wire,
         },
     )
@@ -317,7 +319,7 @@ def handle_disconnect(reason=None):
 def start_mqtt_bridge():
     """Brings up the MQTT over TLS leg alongside Socket.IO."""
     global mqtt_bridge
-    from mqtt_bridge import MqttBridge
+    from app.transport.mqtt_bridge import MqttBridge
 
     mqtt_bridge = MqttBridge(
         engine=server_engine,

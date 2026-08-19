@@ -67,10 +67,10 @@ actuator links can never derive the same key.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python server.py     # terminal 1 — dashboard at http://127.0.0.1:5001
-python sensor.py     # terminal 2
-python actuator.py   # terminal 3
-python attack.py     # terminal 4 (optional — dashboard has buttons for this)
+make server     # terminal 1 — dashboard at http://127.0.0.1:5001
+make sensor     # terminal 2
+make actuator   # terminal 3
+make attack     # terminal 4 (optional — dashboard has buttons for this)
 ```
 
 Open <http://127.0.0.1:5001> for the live dashboard: telemetry chart, relay
@@ -82,13 +82,13 @@ state, threshold slider, manual override, and a colour-coded security log.
 ## Tests
 
 ```bash
-python test_pqc.py         # handshake agreement, domain separation, freshness, tamper rejection
-python test_device_leg.py  # ESP32 wire format (server must be running)
+make test         # handshake agreement, domain separation, freshness, tamper rejection
+make test-device  # ESP32 wire format (server must be running)
 ```
 
 ## The attack demonstration
 
-Three stages, from the dashboard buttons or `attack.py`:
+Three stages, from the dashboard buttons or `app/attacks/attack.py`:
 
 1. **Classical break** — *scripted narration.* There is no classical ECDH in
    this system to break; the stage exists to contrast with stage 2.
@@ -104,36 +104,48 @@ a physical actuator acts on it.
 
 ## Hardware
 
-`wokwi/` contains ESP32 firmware, wiring, and setup notes. The board performs a
+`firmware/` contains ESP32 firmware, wiring, and setup notes. The board performs a
 real DHT22 read and real AES-256-GCM through the ESP32's mbedtls hardware
 crypto, then POSTs to the server's `/telemetry` route.
 
 Runs in the browser on [Wokwi](https://wokwi.com) or on a physical ESP32 —
-identical sketch. [`wokwi/README.md`](wokwi/README.md) has the step-by-step,
+identical sketch. [`firmware/README.md`](firmware/README.md) has the step-by-step,
 including the free-account route (public gateway + a `cloudflared` tunnel, since
 Wokwi's private gateway is a paid feature).
 
 **The ESP32 does not run the handshake.** It uses a provisioned pre-shared key
-(`DEVICE_PSK`), duplicated in `config.py` and `sketch.ino`. Keeping ML-KEM off
+(`DEVICE_PSK`), duplicated in `app/config.py` and `sketch.ino`. Keeping ML-KEM off
 the microcontroller was a deliberate scope decision; this is the one remaining
 pre-shared key in the system.
 
-## Files
+## Layout
+
+```
+app/           server, crypto, dashboard
+  nodes/       sensor, actuator, ESP32 stand-in
+  transport/   MQTT over TLS + broker
+  attacks/     the five attack stages
+tests/         crypto and wire-format checks
+firmware/      ESP32 sketch and wiring
+scripts/       certificate generation
+```
+
+Run `make` on its own to list every command.
 
 | File | Role |
 |---|---|
-| `pqc.py` | ML-KEM-768 keygen / encapsulation / HKDF derivation |
-| `server.py` | Flask-SocketIO server, handshake state, threshold logic |
-| `sensor.py` / `actuator.py` | Simulated nodes |
-| `attacks.py` | Attack stages, shared by the CLI and the dashboard buttons |
-| `attack.py` | CLI runner for the attack sequence |
-| `device_sim.py` | ESP32 stand-in — the constrained leg without hardware |
-| `broker.py` | Pure-Python MQTT broker with TLS 1.3 |
-| `mqtt_transport.py` / `mqtt_bridge.py` | MQTT node transport and server-side leg |
-| `make_certs.sh` | Self-signed CA and broker certificate |
-| `config.py` | Threshold, network config, ESP32 pre-shared key |
-| `templates/index.html` | Dashboard |
-| `wokwi/` | ESP32 firmware and wiring |
+| `app/pqc.py` | ML-KEM-768 keygen / encapsulation / HKDF derivation |
+| `app/server.py` | Flask-SocketIO server, handshake state, threshold logic |
+| `app/nodes/sensor.py` / `app/nodes/actuator.py` | Simulated nodes |
+| `app/attacks/attacks.py` | Attack stages, shared by the CLI and the dashboard buttons |
+| `app/attacks/attack.py` | CLI runner for the attack sequence |
+| `app/nodes/device_sim.py` | ESP32 stand-in — the constrained leg without hardware |
+| `app/transport/broker.py` | Pure-Python MQTT broker with TLS 1.3 |
+| `app/transport/` | MQTT node transport and server-side leg |
+| `scripts/make_certs.sh` | Self-signed CA and broker certificate |
+| `app/config.py` | Threshold, network config, ESP32 pre-shared key |
+| `app/templates/index.html` | Dashboard |
+| `firmware/` | ESP32 firmware and wiring |
 
 ## Honest limitations
 

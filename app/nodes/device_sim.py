@@ -18,7 +18,7 @@ import time
 import requests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from config import DEVICE_PSK, SERVER_URL
+from app.config import DEVICE_PSK, SERVER_URL
 
 
 def seal_reading(temperature, humidity):

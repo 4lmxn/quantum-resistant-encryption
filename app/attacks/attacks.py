@@ -11,7 +11,7 @@ Socket.IO client or inside the server process:
 
 import time
 
-from pqc import ENCAPSULATION_KEY_BYTES, LINK_SENSOR, encapsulate
+from app.pqc import ENCAPSULATION_KEY_BYTES, LINK_SENSOR, encapsulate
 
 
 def stage_classical(log, sleep):

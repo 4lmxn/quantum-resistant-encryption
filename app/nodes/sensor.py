@@ -7,8 +7,8 @@ import time
 import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from config import SERVER_URL, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY, TOPIC_TELEMETRY
-from pqc import LINK_SENSOR, encapsulate, key_fingerprint
+from app.config import SERVER_URL, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY, TOPIC_TELEMETRY
+from app.pqc import LINK_SENSOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
 
@@ -109,7 +109,7 @@ def run_sensor_node():
 
 def run_sensor_node_mqtt():
     """Same node, same crypto — carried over MQTT with TLS 1.3 instead."""
-    from mqtt_transport import MqttLink
+    from app.transport.mqtt_transport import MqttLink
 
     node_id = f"sensor-{os.getpid()}"
     link = MqttLink(node_id)

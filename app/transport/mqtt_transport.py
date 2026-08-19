@@ -11,7 +11,7 @@ import threading
 
 import paho.mqtt.client as mqtt
 
-from config import MQTT_CA_CERT, MQTT_HOST, MQTT_TLS_PORT
+from app.config import MQTT_CA_CERT, MQTT_HOST, MQTT_TLS_PORT
 
 
 class MqttLink:
@@ -64,7 +64,7 @@ class MqttLink:
         if not self._connected.wait(timeout):
             raise ConnectionError(
                 f"MQTT broker unreachable at {MQTT_HOST}:{MQTT_TLS_PORT}. "
-                f"Start it with: python broker.py"
+                f"Start it with: make broker"
             )
         return self
 

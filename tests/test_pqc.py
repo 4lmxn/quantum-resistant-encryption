@@ -4,7 +4,7 @@ import os
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from pqc import (
+from app.pqc import (
     KEM_CIPHERTEXT_BYTES,
     LINK_ACTUATOR,
     LINK_SENSOR,

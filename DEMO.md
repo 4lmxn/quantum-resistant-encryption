@@ -12,9 +12,9 @@ source .venv/bin/activate
 
 | Terminal | Command | Purpose |
 |---|---|---|
-| 1 | `python server.py` | Central server + dashboard |
-| 2 | `python sensor.py` | Sensor node |
-| 3 | `python actuator.py` | Fan relay node |
+| 1 | `make server` | Central server + dashboard |
+| 2 | `make sensor` | Sensor node |
+| 3 | `make actuator` | Fan relay node |
 | 4 | *(kept free)* | For the device and attack demos |
 
 Open <http://127.0.0.1:5001> full-screen. That page is the entire demo.
@@ -51,7 +51,7 @@ What to draw attention to, in order:
 - **The two fingerprints on each row match** — the node and the server each derived the same 256-bit AES key independently. The key itself was never transmitted; those are SHA-256 digests
 - **The sensor and actuator rows have *different* fingerprints** — separate keys per link, so breaking one leg gives you nothing on the other
 
-Then, for the strongest point: **stop `sensor.py` (Ctrl-C) and restart it.**
+Then, for the strongest point: **stop `app/nodes/sensor.py` (Ctrl-C) and restart it.**
 The row disappears and returns with a completely different fingerprint.
 
 > Every connection negotiates a brand new key. Recording today's traffic is
@@ -119,17 +119,17 @@ Walk the rows top to bottom, pressing Run on each.
 Terminal 4:
 
 ```bash
-python device_sim.py
+make device
 ```
 
 > This is the ESP32 leg. A microcontroller can't run the handshake, so it uses a
 > provisioned key and posts over plain HTTP. Same AES-256-GCM, same wire format
-> as the firmware in `wokwi/sketch.ino`.
+> as the firmware in `firmware/sketch.ino`.
 
 Then Ctrl-C and:
 
 ```bash
-python device_sim.py --forge
+make device ARGS=--forge
 ```
 
 > Every packet rejected with HTTP 400. Even on the constrained leg, an attacker
@@ -140,8 +140,8 @@ python device_sim.py --forge
 ## 6. Tests — 30 seconds
 
 ```bash
-python test_pqc.py
-python test_device_leg.py
+make test
+make test-device
 ```
 
 > Handshake agreement, domain separation between the two links, a fresh key per
@@ -181,4 +181,4 @@ ML-KEM off the microcontroller, and it's documented in both places it appears.
 | Port 5001 in use | `pkill -f server.py` |
 | Handshake table empty | Nodes not started, or started before the server |
 | No FAN_ON firing | Drag the threshold below the current temperature |
-| Dashboard blank | Restart `server.py` — templates are cached when debug is off |
+| Dashboard blank | Restart `app/server.py` — templates are cached when debug is off |

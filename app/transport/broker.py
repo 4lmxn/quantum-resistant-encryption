@@ -3,8 +3,8 @@
 Pure Python (amqtt) — no mosquitto install. Run this before the nodes when
 using the MQTT transport:
 
-    ./make_certs.sh     # once
-    python broker.py
+    make certs     # once
+    make broker
 """
 
 import asyncio
@@ -13,9 +13,7 @@ import os
 
 from amqtt.broker import Broker
 
-from config import MQTT_HOST, MQTT_TLS_PORT
-
-CERT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs")
+from app.config import CERT_DIR, MQTT_HOST, MQTT_TLS_PORT
 
 # amqtt 0.12 field names: snake_case, ssl is a bool, no "default" listener needed.
 CONFIG = {
@@ -25,8 +23,8 @@ CONFIG = {
             "bind": f"{MQTT_HOST}:{MQTT_TLS_PORT}",
             "max_connections": 50,
             "ssl": True,
-            "certfile": os.path.join(CERT_DIR, "broker.crt"),
-            "keyfile": os.path.join(CERT_DIR, "broker.key"),
+            "certfile": str(CERT_DIR / "broker.crt"),
+            "keyfile": str(CERT_DIR / "broker.key"),
         },
     },
     "sys_interval": 0,
@@ -36,8 +34,8 @@ CONFIG = {
 
 
 async def serve():
-    if not os.path.exists(os.path.join(CERT_DIR, "broker.crt")):
-        raise SystemExit("Certificates missing. Run ./make_certs.sh first.")
+    if not os.path.exists(str(CERT_DIR / "broker.crt")):
+        raise SystemExit("Certificates missing. Run: make certs")
 
     broker = Broker(CONFIG)
     await broker.start()

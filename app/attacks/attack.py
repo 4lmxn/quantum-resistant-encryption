@@ -6,8 +6,8 @@ attacks.py so the dashboard buttons run exactly the same code.
 
 import socketio
 
-import attacks
-from config import SERVER_URL
+from app.attacks import attacks
+from app.config import SERVER_URL
 
 sio = socketio.Client()
 intercepted = {}

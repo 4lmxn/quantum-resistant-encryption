@@ -6,8 +6,8 @@ import time
 import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from config import SERVER_URL, TOPIC_COMMAND, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY
-from pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
+from app.config import SERVER_URL, TOPIC_COMMAND, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY
+from app.pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
 
@@ -128,7 +128,7 @@ def run_actuator_node():
 
 def run_actuator_node_mqtt():
     """Same node, same GCM tag check — carried over MQTT with TLS 1.3."""
-    from mqtt_transport import MqttLink
+    from app.transport.mqtt_transport import MqttLink
 
     node_id = f"actuator-{os.getpid()}"
     link = MqttLink(node_id)
