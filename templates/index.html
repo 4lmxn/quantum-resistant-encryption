@@ -14,8 +14,8 @@
         <!-- Header & Connection Status -->
         <div class="flex justify-between items-center border-b border-gray-700 pb-4">
             <div>
-                <h1 class="text-2xl font-bold text-indigo-400">Quantum-Safe IoT System Architecture</h1>
-                <p class="text-xs text-gray-400 mt-1">Kyber-768 ML-KEM + AES-256-GCM Telemetry Grid</p>
+                <h1 class="text-2xl font-bold text-indigo-400">Post-Quantum Secure Communication for IoT</h1>
+                <p class="text-xs text-gray-400 mt-1">Dual-KEM · CRYSTALS-Kyber (ML-KEM-768, FIPS 203) + AES-256-GCM · Sensor → Server → Actuator</p>
             </div>
             <div class="flex items-center space-x-3">
                 <span id="conn-badge" class="bg-yellow-600 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-2">
@@ -25,16 +25,39 @@
             </div>
         </div>
 
+        <!-- Why encryption is needed on this link -->
+        <div class="bg-gradient-to-r from-red-950/40 to-gray-800 p-4 rounded-xl border border-red-900/50">
+            <h3 class="text-sm font-semibold text-red-300 mb-2">Why this link must be encrypted</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-gray-300">
+                <div>
+                    <span class="text-red-400 font-semibold">Telemetry is confidential.</span>
+                    An eavesdropper on an unencrypted IoT link reads every reading — occupancy,
+                    industrial process data, patient vitals.
+                </div>
+                <div>
+                    <span class="text-red-400 font-semibold">Commands move physical objects.</span>
+                    A forged packet on the actuator leg opens a valve or a door. Integrity here
+                    is a safety property, not a privacy one.
+                </div>
+                <div>
+                    <span class="text-red-400 font-semibold">Classical key exchange expires.</span>
+                    RSA and ECDH fall to Shor's algorithm. Traffic harvested today is decrypted
+                    the day that hardware arrives.
+                </div>
+            </div>
+        </div>
+
         <!-- Node Status Grid -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <!-- Telemetry Display Card -->
             <div class="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg">
                 <div class="flex justify-between items-center">
-                    <h2 class="text-gray-400 text-sm font-medium">Sensor Node</h2>
-                    <span class="text-xs bg-indigo-900 text-indigo-300 px-2 py-0.5 rounded">AES-256-GCM</span>
+                    <h2 class="text-gray-400 text-sm font-medium">Sensor Node · data ingress</h2>
+                    <span class="text-xs bg-indigo-900 text-indigo-300 px-2 py-0.5 rounded">Key A</span>
                 </div>
                 <p id="temp-display" class="text-3xl font-extrabold text-green-400 mt-3">-- °C</p>
-                <p id="humidity-display" class="text-sm text-gray-400 mt-1">Sensor Reading 2: -- %</p>
+                <p id="humidity-display" class="text-sm text-gray-400 mt-1">Humidity: -- %</p>
+                <p class="text-xs text-gray-600 mt-2">Decrypted with Key A — sealed at the node</p>
             </div>
 
             <!-- Central Decision Engine Card with Dynamic Slider -->
@@ -76,25 +99,89 @@
         <!-- Interactive Quantum Attack Control Panel -->
         <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
             <h3 class="text-sm font-semibold text-gray-300 mb-3 flex items-center gap-2">
-                <span>🎯 Threat Simulation Panel</span>
-                <span class="text-xs text-gray-500 font-normal">(Trigger simulated attack sequences)</span>
+                <span>🎯 Quantum Threat Model</span>
+                <span class="text-xs text-gray-500 font-normal">(Report §1.4 — click Run to exercise each defence live)</span>
             </h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <button onclick="triggerAttack('shor')" 
-                        class="bg-red-900/40 hover:bg-red-800/60 border border-red-700 text-red-300 text-xs font-bold py-2.5 px-4 rounded-lg transition text-left flex justify-between items-center">
-                    <span>1. Classical RSA Crack (Shor's)</span>
-                    <span class="text-xs opacity-70">💥 Test</span>
-                </button>
-                <button onclick="triggerAttack('kyber')" 
-                        class="bg-indigo-900/40 hover:bg-indigo-800/60 border border-indigo-700 text-indigo-300 text-xs font-bold py-2.5 px-4 rounded-lg transition text-left flex justify-between items-center">
-                    <span>2. Kyber-768 Lattice Test</span>
-                    <span class="text-xs opacity-70">🛡️ Test</span>
-                </button>
-                <button onclick="triggerAttack('mitm')" 
-                        class="bg-yellow-900/40 hover:bg-yellow-800/60 border border-yellow-700 text-yellow-300 text-xs font-bold py-2.5 px-4 rounded-lg transition text-left flex justify-between items-center">
-                    <span>3. Inject MITM Packet Tamper</span>
-                    <span class="text-xs opacity-70">⚠️ Test</span>
-                </button>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                    <thead class="text-gray-500 border-b border-gray-700">
+                        <tr>
+                            <th class="text-left py-2 px-2">Threat</th>
+                            <th class="text-left py-2 px-2">What it breaks</th>
+                            <th class="text-left py-2 px-2">Defence in this system</th>
+                            <th class="text-center py-2 px-2 w-20">Run</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-gray-300">
+                        <tr class="border-b border-gray-800/50">
+                            <td class="py-2 px-2 text-red-300 font-semibold">Shor's algorithm</td>
+                            <td class="py-2 px-2 text-gray-400">RSA / ECDH key exchange, in polynomial time</td>
+                            <td class="py-2 px-2">Replaced by ML-KEM-768 (Module-LWE)</td>
+                            <td class="py-2 px-2 text-center">
+                                <button onclick="triggerAttack('shor')" class="bg-red-900/40 hover:bg-red-800/60 border border-red-700 text-red-300 px-3 py-1 rounded transition">Run</button>
+                            </td>
+                        </tr>
+                        <tr class="border-b border-gray-800/50">
+                            <td class="py-2 px-2 text-indigo-300 font-semibold">Lattice cryptanalysis</td>
+                            <td class="py-2 px-2 text-gray-400">Would break Kyber if Module-LWE were solvable</td>
+                            <td class="py-2 px-2">2<sup>181</sup> classical security margin; no known quantum attack</td>
+                            <td class="py-2 px-2 text-center">
+                                <button onclick="triggerAttack('kyber')" class="bg-indigo-900/40 hover:bg-indigo-800/60 border border-indigo-700 text-indigo-300 px-3 py-1 rounded transition">Run</button>
+                            </td>
+                        </tr>
+                        <tr class="border-b border-gray-800/50">
+                            <td class="py-2 px-2 text-orange-300 font-semibold">Harvest now, decrypt later</td>
+                            <td class="py-2 px-2 text-gray-400">Archived traffic, opened once quantum hardware arrives</td>
+                            <td class="py-2 px-2">Fresh keypair per session + key zeroization</td>
+                            <td class="py-2 px-2 text-center">
+                                <button onclick="triggerAttack('harvest')" class="bg-orange-900/40 hover:bg-orange-800/60 border border-orange-700 text-orange-300 px-3 py-1 rounded transition">Run</button>
+                            </td>
+                        </tr>
+                        <tr class="border-b border-gray-800/50">
+                            <td class="py-2 px-2 text-yellow-300 font-semibold">MitM / device impersonation</td>
+                            <td class="py-2 px-2 text-gray-400">Forged actuator commands that move physical hardware</td>
+                            <td class="py-2 px-2">AES-256-GCM tag rejects the packet before the relay acts</td>
+                            <td class="py-2 px-2 text-center">
+                                <button onclick="triggerAttack('mitm')" class="bg-yellow-900/40 hover:bg-yellow-800/60 border border-yellow-700 text-yellow-300 px-3 py-1 rounded transition">Run</button>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="py-2 px-2 text-cyan-300 font-semibold">Grover's algorithm</td>
+                            <td class="py-2 px-2 text-gray-400">Halves symmetric key strength (AES-128 → 2<sup>64</sup>)</td>
+                            <td class="py-2 px-2">AES-256 leaves a 2<sup>128</sup> post-quantum margin</td>
+                            <td class="py-2 px-2 text-center">
+                                <button onclick="triggerAttack('grover')" class="bg-cyan-900/40 hover:bg-cyan-800/60 border border-cyan-700 text-cyan-300 px-3 py-1 rounded transition">Run</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- What an eavesdropper sees vs what the key holder sees -->
+        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
+            <h3 class="text-md font-semibold text-gray-300 mb-3">
+                📡 Wire View
+                <span class="text-xs text-gray-500 font-normal ml-2">(the same packet, from two vantage points)</span>
+            </h3>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="bg-black/60 p-3 rounded-lg border border-red-900/50">
+                    <p class="text-xs text-red-400 font-semibold mb-2">🕵️ What an eavesdropper captures</p>
+                    <p class="text-xs text-gray-500 mb-1">nonce (96-bit, fresh per message)</p>
+                    <p id="wire-nonce" class="font-mono text-xs text-gray-400 break-all mb-2">—</p>
+                    <p class="text-xs text-gray-500 mb-1">ciphertext ‖ GCM tag</p>
+                    <p id="wire-cipher" class="font-mono text-xs text-red-300 break-all leading-relaxed">—</p>
+                    <p id="wire-size" class="text-xs text-gray-600 mt-2">Indistinguishable from random without the key.</p>
+                </div>
+                <div class="bg-black/60 p-3 rounded-lg border border-green-900/50">
+                    <p class="text-xs text-green-400 font-semibold mb-2">🔓 What the key holder recovers</p>
+                    <p id="wire-plain" class="font-mono text-xs text-green-300 break-all leading-relaxed">—</p>
+                    <p class="text-xs text-gray-500 mt-3">
+                        Only the server holds the ML-KEM-derived session key, so only the server
+                        reaches this. The GCM tag additionally proves nobody altered the bytes
+                        in transit.
+                    </p>
+                </div>
             </div>
         </div>
 
@@ -102,8 +189,8 @@
         <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg mb-6">
             <div class="flex justify-between items-center mb-3">
                 <h3 class="text-md font-semibold text-gray-300">
-                    🔐 Post-Quantum Key Establishment
-                    <span class="text-xs text-gray-500 font-normal ml-2">(ML-KEM-768 · NIST FIPS 203)</span>
+                    🔐 Dual-KEM Key Establishment
+                    <span class="text-xs text-gray-500 font-normal ml-2">(one independent ML-KEM-768 exchange per leg · FIPS 203)</span>
                 </h3>
                 <span id="pqc-count" class="text-xs text-gray-400">0 active sessions</span>
             </div>
@@ -127,8 +214,10 @@
                 </table>
             </div>
             <p class="text-xs text-gray-500 mt-3">
-                Keys are never transmitted. Each side derives its own from the ML-KEM shared secret;
-                the matching fingerprints are SHA-256 digests proving they agree.
+                Keys are never transmitted — each side derives its own from the ML-KEM shared secret,
+                and the matching fingerprints are SHA-256 digests proving they agree. The sensor and
+                actuator rows carry <span class="text-gray-400">different</span> fingerprints: that is
+                the Dual-KEM separation, so compromising the data leg yields nothing on the command leg.
             </p>
         </div>
 
@@ -216,7 +305,16 @@
         // --- Socket Listeners ---
         socket.on('update_telemetry', (data) => {
             document.getElementById('temp-display').innerText = data.temp + ' °C';
-            document.getElementById('humidity-display').innerText = 'Sensor Reading 2: ' + data.humidity + ' %';
+            document.getElementById('humidity-display').innerText = 'Humidity: ' + data.humidity + ' %';
+
+            if (data.wire && data.wire.ciphertext) {
+                document.getElementById('wire-nonce').innerText = data.wire.nonce;
+                document.getElementById('wire-cipher').innerText = data.wire.ciphertext;
+                document.getElementById('wire-size').innerText =
+                    `${data.wire.bytes_on_wire} bytes on the wire · from ${data.source || 'node'}`;
+                document.getElementById('wire-plain').innerText =
+                    JSON.stringify({ temperature: data.temp, humidity: data.humidity }, null, 2);
+            }
 
             const now = new Date().toLocaleTimeString();
             if (chart.data.labels.length > 12) {

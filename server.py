@@ -97,14 +97,26 @@ def broadcast_pqc_status():
     socketio.emit("pqc_status", {"sessions": list(server_engine.sessions.values())})
 
 
-def process_telemetry(data, source):
+def process_telemetry(data, source, packet=None):
     """Shared decision logic for both the Socket.IO nodes and the ESP32 HTTP leg."""
+    # The raw packet goes to the dashboard too, so it can show side by side what
+    # an eavesdropper captures against what the key holder recovers.
+    wire = {}
+    if packet:
+        ciphertext = packet.get("ciphertext", "")
+        wire = {
+            "nonce": packet.get("nonce", ""),
+            "ciphertext": ciphertext,
+            "bytes_on_wire": len(ciphertext) // 2 + len(packet.get("nonce", "")) // 2,
+        }
     socketio.emit(
         "update_telemetry",
         {
             "temp": data["temperature"],
             "humidity": data["humidity"],
             "status": "SECURE_ML_KEM_768",
+            "source": source,
+            "wire": wire,
         },
     )
     log(
@@ -161,7 +173,7 @@ def http_telemetry():
     except Exception as exc:
         log("ERROR", f"[SERVER ERROR] ESP32 packet rejected: {exc}")
         return {"status": "rejected"}, 400
-    process_telemetry(data, "ESP32 node")
+    process_telemetry(data, "ESP32 node", packet)
     return {"status": "accepted", "threshold": server_engine.temp_threshold}
 
 
@@ -213,7 +225,7 @@ def handle_sensor_telemetry(packet):
         return
     try:
         data = server_engine.decrypt_sensor_data(session_key, packet)
-        process_telemetry(data, "sensor node")
+        process_telemetry(data, "sensor node", packet)
     except Exception as exc:
         log("ERROR", f"[SERVER ERROR] Decryption failed: {exc}")
 

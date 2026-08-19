@@ -70,6 +70,53 @@ def stage_lattice(log, sleep, obtain_public_key):
     )
 
 
+def stage_harvest(log, sleep, obtain_public_key):
+    """Report 1.4.1 — Harvest Now, Decrypt Later.
+
+    Real: shows that two handshakes produce unrelated keys, so archived traffic
+    cannot be opened by a key recovered later.
+    """
+    log("ATTACK", "[HARVEST NOW] Archiving encrypted telemetry for future decryption...")
+    sleep(1)
+    log("ATTACK", "[HARVEST NOW] Captured ciphertext stored. Waiting years for a quantum computer...")
+    sleep(1.5)
+
+    first = obtain_public_key()
+    second = obtain_public_key()
+    if first is None or second is None:
+        log("ERROR", "[ATTACK ABORTED] No handshake observed on the wire.")
+        return
+
+    log(
+        "ATTACK",
+        f"[HARVEST NOW] Session 1 public key {first[:8].hex()}... "
+        f"vs session 2 {second[:8].hex()}...",
+    )
+    log(
+        "SUCCESS" if first != second else "ERROR",
+        "[ATTACK FAILED] Every session negotiates a fresh keypair, and nodes wipe "
+        "the old key. A key broken in 2040 opens nothing recorded today.",
+    )
+
+
+def stage_grover(log, sleep):
+    """Report 1.4.4 — Grover's algorithm against the symmetric layer."""
+    log("ATTACK", "[GROVER'S ALG] Quantum brute-force against the AES session key...")
+    sleep(1)
+    log("ATTACK", "[GROVER'S ALG] Grover halves the effective key length: sqrt(2^n) = 2^(n/2).")
+    sleep(1)
+    log(
+        "ERROR",
+        "[HYPOTHETICAL] Against AES-128 this leaves 2^64 — a real quantum margin failure.",
+    )
+    sleep(1)
+    log(
+        "SUCCESS",
+        "[ATTACK FAILED] This link uses AES-256, so Grover leaves 2^128 effective "
+        "security. Still computationally infeasible.",
+    )
+
+
 def stage_mitm(log, sleep, deliver):
     """Real: a forged packet reaches the actuator; only the GCM tag stops it."""
     log("ATTACK", "[QUANTUM ATTACK 3] Intercepting Actuator Command Payload...")
@@ -90,6 +137,10 @@ def run_stage(name, log, sleep, obtain_public_key, deliver):
         stage_classical(log, sleep)
     elif name == "kyber":
         stage_lattice(log, sleep, obtain_public_key)
+    elif name == "harvest":
+        stage_harvest(log, sleep, obtain_public_key)
+    elif name == "grover":
+        stage_grover(log, sleep)
     elif name == "mitm":
         stage_mitm(log, sleep, deliver)
     else:

@@ -21,7 +21,24 @@ Open <http://127.0.0.1:5001> full-screen. That page is the entire demo.
 
 ---
 
-## 1. "The key exchange is real" — 60 seconds
+## 1. "Why this needs encrypting at all" — 30 seconds
+
+Start at the top strip and the **Wire View**, before any crypto talk.
+
+> This is one telemetry packet, shown twice. On the left is what anyone tapping
+> the network captures — 69 bytes indistinguishable from random. On the right is
+> what the server recovers, because it is the only party holding the key.
+>
+> On an unencrypted IoT link the left panel would read exactly like the right
+> one. That is the whole problem: telemetry leaks occupancy and process data, and
+> the command leg moves physical hardware, so a forged packet opens a valve.
+
+Point out that the nonce changes on every single message — the same reading
+encrypts to completely different bytes each time.
+
+---
+
+## 2. "The key exchange is real" — 60 seconds
 
 Point at the **Post-Quantum Key Establishment** table.
 
@@ -43,7 +60,7 @@ The row disappears and returns with a completely different fingerprint.
 
 ---
 
-## 2. "The control loop works" — 30 seconds
+## 3. "The control loop works" — 30 seconds
 
 Drag the **threshold slider** below the current temperature.
 
@@ -57,17 +74,18 @@ Press **Manual Relay Override** to show operator control uses the same sealed pa
 
 ---
 
-## 3. "Classical crypto dies, lattice crypto does not" — 90 seconds
+## 4. "Every threat in Chapter 1.4, answered" — 2 minutes
 
-Threat Simulation Panel, buttons in order.
+The **Quantum Threat Model** table maps one-to-one onto §1.4 of your report.
+Walk the rows top to bottom, pressing Run on each.
 
-**Button 1 — Classical RSA Crack (Shor's).** Be honest here:
+**Shor's algorithm.** Be honest here:
 
 > This stage is narration. There is no classical ECDH in my system to break —
 > it's here for contrast, to show what Shor's algorithm would do to RSA or
 > elliptic-curve key exchange.
 
-**Button 2 — Kyber-768 Lattice Test.** This one is real:
+**Lattice cryptanalysis.** This one is real:
 
 > It captures an actual 1184-byte ML-KEM public key off the wire and encapsulates
 > against it twice. The two secrets are completely different, which is the point:
@@ -77,7 +95,18 @@ Threat Simulation Panel, buttons in order.
 > It reports the Module-LWE search space rather than pretending to solve it.
 > Nobody can run BKZ on a 9472-bit lattice in a demo.
 
-**Button 3 — Inject MITM Packet Tamper.** The payoff:
+**Harvest now, decrypt later.** The row your abstract leads with:
+
+> Two handshakes, two unrelated keys. Archived traffic cannot be opened by a key
+> recovered later, because that key never existed when the traffic was recorded.
+
+**Grover's algorithm.** The symmetric side:
+
+> Grover halves effective key length. AES-128 would drop to 2^64 — genuinely
+> weak. This link uses AES-256, so the margin is 2^128. That is exactly why the
+> report specifies 256 and not 128.
+
+**MitM / device impersonation.** The payoff:
 
 > A forged command is delivered to the actuator. The GCM tag fails, the log turns
 > red, and — this is the important part — **the relay does not move.** Tampering
@@ -85,7 +114,7 @@ Threat Simulation Panel, buttons in order.
 
 ---
 
-## 4. "It works on constrained hardware too" — 45 seconds
+## 5. "It works on constrained hardware too" — 45 seconds
 
 Terminal 4:
 
@@ -108,7 +137,7 @@ python device_sim.py --forge
 
 ---
 
-## 5. Tests — 30 seconds
+## 6. Tests — 30 seconds
 
 ```bash
 python test_pqc.py
