@@ -3,462 +3,474 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Locked Thermometer</title>
+<title>Post-Quantum Secure IoT Communication</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 <style>
 :root{
-  --ground:#141a2e; --surface:#1b2340; --surface-2:#232c4e; --line:#2e3860;
-  --ink:#e9edfa; --muted:#8f9ac0; --faint:#5f6a92;
-  --heat:#ff9d4d; --cool:#4dd4e8; --sealed:#5ee89b; --broken:#ff5c7a; --key:#b98cff;
-  --r:14px;
+  --bg:#0e1421; --panel:#182036; --panel-2:#202944; --line:#2d3859; --line-2:#3d4a72;
+  --ink:#f4f7fd; --muted:#b3bdd8; --faint:#8c99c4;      /* AA on --panel */
+  --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --info:#60a5fa; --key:#c4a2fc;
+  --pad:clamp(9px,.8vw,16px);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{
-  background:var(--ground); color:var(--ink);
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);
   font-family:'IBM Plex Sans',system-ui,sans-serif;
-  /* Everything below sizes in em, so this one line drives the whole page.
-     On a 1920-wide projector it lands near 21px; on a laptop, near 16px. */
-  font-size:clamp(15px, 1.08vw, 22px);
-  line-height:1.55; padding:2em 1.4em 4em;
-  background-image:radial-gradient(ellipse 900px 500px at 50% -10%, #1e2748 0%, transparent 70%);
+  font-size:clamp(13px,.9vw,18px);line-height:1.45;overflow:hidden}
+.mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.sr-only:focus{position:static;width:auto;height:auto;margin:0;clip:auto;
+  padding:.4em .8em;background:var(--info);color:#000;border-radius:4px}
+:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+
+.app{height:100vh;display:grid;grid-template-rows:auto auto 1fr;gap:var(--pad);padding:var(--pad)}
+
+/* ---------------------------- header ---------------------------- */
+.bar{display:flex;align-items:center;gap:var(--pad);flex-wrap:wrap;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:calc(var(--pad)*.6) var(--pad)}
+.bar h1{font-size:1.2em;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.bar .sub{font-size:.78em;color:var(--faint);white-space:nowrap}
+.grow{flex:1}
+.chip{display:inline-flex;align-items:center;gap:.45em;font-size:.8em;font-weight:600;
+  padding:.32em .7em;border-radius:5px;border:1px solid var(--line);white-space:nowrap}
+.chip .dot{width:.5em;height:.5em;border-radius:50%;background:var(--faint);flex-shrink:0}
+.chip.on{color:var(--ok);border-color:rgba(74,222,128,.45)}
+.chip.on .dot{background:var(--ok)}
+
+/* ------------------ pipeline: three stations + flow ------------------ */
+.pipe{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:0}
+.node{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:calc(var(--pad)*.75) var(--pad);display:flex;flex-direction:column;gap:.3em;min-width:0}
+.node.alert{border-color:rgba(251,191,36,.55)}
+.node .top{display:flex;align-items:baseline;justify-content:space-between;gap:.6em}
+.node .name{font-size:.8em;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);font-weight:600;white-space:nowrap}
+.node .keytag{font-size:.72em;font-weight:600;padding:.15em .5em;border-radius:4px;
+  background:rgba(196,162,252,.16);color:var(--key);white-space:nowrap}
+.big{font-size:2.4em;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.big.warn{color:var(--warn)}.big.ok{color:var(--ok)}.big.off{color:var(--faint)}.big.info{color:var(--info)}
+.node .meta{font-size:.82em;color:var(--muted)}
+.node .fine{font-size:.75em;color:var(--faint)}
+
+/* the connector: a labelled link, not decoration */
+.link{width:clamp(52px,6vw,110px);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:.3em;position:relative}
+.link .track{width:100%;height:2px;background:var(--line);position:relative;overflow:hidden}
+.link .track::after{content:'';position:absolute;inset:0;width:34%;
+  background:linear-gradient(90deg,transparent,var(--ok),transparent);
+  transform:translateX(-120%)}
+.link.active .track::after{animation:flow .9s ease-out}
+.link.reject .track::after{background:linear-gradient(90deg,transparent,var(--bad),transparent);
+  animation:flow .5s ease-out}
+@keyframes flow{to{transform:translateX(320%)}}
+.link .tag{font-size:.68em;color:var(--faint);white-space:nowrap;letter-spacing:.04em}
+
+/* --------------------------- main grid --------------------------- */
+.main{display:grid;grid-template-columns:minmax(240px,1fr) minmax(300px,1.35fr) minmax(280px,1.25fr);
+  gap:var(--pad);min-height:0}
+.pane{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.pane > .head{padding:calc(var(--pad)*.6) var(--pad);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:.5em;flex-shrink:0}
+.pane > .head h2{font-size:.78em;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);font-weight:600}
+.pane > .head .hint{font-size:.72em;color:var(--faint)}
+.pane > .body{padding:calc(var(--pad)*.75);overflow-y:auto;min-height:0;flex:1}
+
+/* attack list */
+.atk{display:grid;grid-template-columns:1.5em 1fr auto;align-items:center;gap:.6em;width:100%;
+  text-align:left;background:var(--panel-2);border:1px solid var(--line);border-left:3px solid var(--line-2);
+  border-radius:5px;padding:.5em .6em;margin-bottom:.4em;color:inherit;font:inherit;cursor:pointer;
+  transition:border-color .14s,background .14s}
+.atk:last-child{margin-bottom:0}
+.atk:hover{border-color:var(--line-2);background:#243052}
+.atk[aria-pressed=true]{border-left-color:var(--info);background:#26314f}
+.atk .n{font-family:'IBM Plex Mono',monospace;font-size:.82em;font-weight:600;color:var(--faint);text-align:center}
+.atk .nm{font-size:.9em;font-weight:600;line-height:1.25}
+.atk .sev{font-size:.66em;font-weight:700;letter-spacing:.05em;padding:.15em .4em;border-radius:3px;white-space:nowrap}
+.sev-CRITICAL{background:rgba(248,113,113,.16);color:var(--bad)}
+.sev-HIGH{background:rgba(251,191,36,.16);color:var(--warn)}
+.sev-MEDIUM{background:rgba(96,165,250,.16);color:var(--info)}
+.atk .st{font-size:.68em;color:var(--faint);display:block;margin-top:.1em}
+.atk .st.def{color:var(--ok)} .atk .st.na{color:var(--faint)} .atk .st.run{color:var(--warn)}
+
+/* finding detail — the attack name is the loudest thing here */
+.finding .title{font-size:1.5em;font-weight:700;letter-spacing:-.015em;line-height:1.15;margin-bottom:.3em}
+.finding .chips{display:flex;flex-wrap:wrap;gap:.35em;margin-bottom:.8em}
+.finding .chips span{font-size:.7em;font-weight:700;letter-spacing:.05em;padding:.22em .5em;border-radius:3px}
+.st-DEFENDED{background:rgba(74,222,128,.16);color:var(--ok)}
+.st-SUCCEEDED{background:rgba(248,113,113,.16);color:var(--bad)}
+.st-NOT{background:rgba(140,153,196,.16);color:var(--faint)}
+.st-INCONCLUSIVE{background:rgba(251,191,36,.16);color:var(--warn)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:.4em .8em;font-size:.84em;align-items:baseline}
+dt{color:var(--faint);white-space:nowrap;font-weight:500}
+dd{color:var(--ink)}
+.block{margin-top:.8em}
+.block h3{font-size:.72em;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);
+  font-weight:600;margin-bottom:.25em}
+.block p{font-size:.84em;color:var(--muted);line-height:1.5}
+.empty{color:var(--faint);font-size:.85em;line-height:1.6}
+
+/* tabs */
+.tabs{display:flex;gap:.25em}
+.tab{padding:.28em .6em;border-radius:4px;border:1px solid transparent;background:none;
+  color:var(--faint);font:inherit;font-size:.76em;font-weight:600;cursor:pointer}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected=true]{background:var(--panel-2);border-color:var(--line-2);color:var(--ink)}
+#log{font-family:'IBM Plex Mono',monospace;font-size:.78em;line-height:1.65}
+#log p{display:flex;gap:.6em}
+#log time{color:var(--faint);flex-shrink:0}
+.l-ok{color:var(--ok)}.l-bad{color:var(--bad)}.l-warn{color:var(--warn)}.l-atk{color:var(--key)}
+table{width:100%;border-collapse:collapse;font-size:.76em}
+th{text-align:left;color:var(--faint);font-weight:600;padding:.35em .4em;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:.4em;border-bottom:1px solid rgba(45,56,89,.5);
+  font-family:'IBM Plex Mono',monospace;white-space:nowrap}
+td.k{color:var(--key)}td.ok{color:var(--ok)}td.no{color:var(--bad);font-weight:600}td.num{text-align:right;color:var(--muted)}
+.hex{font-family:'IBM Plex Mono',monospace;font-size:.74em;line-height:1.5;word-break:break-all;color:var(--bad)}
+.plain{font-family:'IBM Plex Mono',monospace;font-size:.8em;line-height:1.5;color:var(--ok);white-space:pre-wrap}
+.wbox{border:1px solid;border-radius:5px;padding:.5em .6em;margin-bottom:.5em}
+.wbox.e{background:rgba(248,113,113,.05);border-color:rgba(248,113,113,.25)}
+.wbox.d{background:rgba(74,222,128,.05);border-color:rgba(74,222,128,.25);margin-bottom:0}
+.wbox .t{font-size:.72em;font-weight:600;margin-bottom:.3em;display:flex;justify-content:space-between;gap:.5em}
+.wbox.e .t{color:var(--bad)}.wbox.d .t{color:var(--ok)}
+.gap{border-left:2px solid var(--warn);padding-left:.6em;margin-bottom:.6em}
+.gap b{font-size:.86em;color:var(--warn);display:block}
+.gap span{font-size:.79em;color:var(--muted)}
+
+/* controls */
+.row{display:flex;gap:.4em}
+.btn{flex:1;padding:.45em .6em;border-radius:5px;border:1px solid var(--line-2);
+  background:var(--panel-2);color:var(--ink);font:inherit;font-size:.82em;font-weight:500;
+  cursor:pointer;transition:.14s;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--info);color:var(--info)}
+.btn:disabled{opacity:.35;cursor:default}
+.btn kbd{font-family:'IBM Plex Mono',monospace;font-size:.85em;opacity:.6;margin-left:.35em}
+input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
+
+@media(max-width:1180px){
+  body{overflow:auto}.app{height:auto}
+  .pipe{grid-template-columns:1fr;gap:.5em}.link{width:auto;height:2.2em}
+  .main{grid-template-columns:1fr}.pane > .body{max-height:20em}
 }
-.wrap{max-width:82em;margin:0 auto}
-h1,h2,h3{font-family:'Space Grotesk',sans-serif;line-height:1.2}
-.mono{font-family:'IBM Plex Mono',monospace}
-
-/* ---------- masthead ---------- */
-.masthead{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;
-  padding-bottom:20px;border-bottom:1px solid var(--line);margin-bottom:40px;flex-wrap:wrap}
-.masthead h1{font-size:2.3em;font-weight:700;letter-spacing:-.02em}
-.masthead p{color:var(--muted);font-size:1.02em;margin-top:.4em;max-width:56ch}
-.live{display:flex;align-items:center;gap:.5em;font-size:.92em;font-weight:500;
-  padding:.45em .9em;border-radius:999px;border:1px solid var(--line);background:var(--surface);white-space:nowrap}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--faint)}
-.live.on .dot{background:var(--sealed);box-shadow:0 0 0 3px rgba(94,232,155,.18)}
-.live.on{color:var(--sealed);border-color:rgba(94,232,155,.3)}
-
-/* ---------- the pipeline ---------- */
-.pipeline{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:0;margin-bottom:14px}
-.station{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:1.5em;text-align:center;position:relative}
-.station .icon{font-size:2.4em;line-height:1;margin-bottom:.3em;display:block}
-.station .role{font-size:.72em;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);font-weight:600}
-.station .name{font-family:'Space Grotesk',sans-serif;font-size:1.18em;font-weight:500;margin:.25em 0 .6em}
-.reading{font-family:'Space Grotesk',sans-serif;font-size:3.1em;font-weight:700;letter-spacing:-.03em;color:var(--heat)}
-.sub{font-size:.88em;color:var(--muted);margin-top:.2em}
-.verdict{font-family:'Space Grotesk',sans-serif;font-size:2em;font-weight:700;margin-top:.2em}
-.fan-state{font-family:'Space Grotesk',sans-serif;font-size:3.1em;font-weight:700;letter-spacing:-.02em}
-.fan-state.on{color:var(--cool)} .fan-state.off{color:var(--faint)}
-.spin{display:inline-block}
-.fan-state.on .spin{animation:spin 1.4s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* the wire between stations, and the packet that rides it */
-.wire{position:relative;width:clamp(60px,9vw,120px);display:flex;align-items:center;justify-content:center}
-.wire::before{content:'';position:absolute;left:0;right:0;height:2px;
-  background:repeating-linear-gradient(90deg,var(--line) 0 6px,transparent 6px 12px)}
-.packet{position:relative;font-size:1.5em;background:var(--ground);padding:3px 5px;border-radius:6px;
-  opacity:.28;transition:opacity .2s}
-.wire.busy .packet{animation:travel 1.1s ease-in-out;opacity:1}
-.wire.busy::before{background:linear-gradient(90deg,transparent,var(--sealed),transparent);opacity:.6}
-.wire.broken .packet{animation:shatter .7s ease-out;opacity:1}
-.wire.broken::before{background:linear-gradient(90deg,transparent,var(--broken),transparent);opacity:.8}
-@keyframes travel{0%{transform:translateX(-46px) scale(.7);opacity:0}
-  22%{opacity:1;transform:translateX(-20px) scale(1)}
-  78%{opacity:1;transform:translateX(20px) scale(1)}
-  100%{transform:translateX(46px) scale(.7);opacity:0}}
-@keyframes shatter{0%{transform:scale(1) rotate(0)}
-  35%{transform:scale(1.5) rotate(-14deg)}
-  100%{transform:scale(.5) rotate(24deg);opacity:0}}
-
-.wire-caption{text-align:center;font-size:.86em;color:var(--faint);margin-bottom:34px}
-.wire-caption b{color:var(--sealed);font-weight:600}
-
-/* ---------- generic panel ---------- */
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:1.7em;margin-bottom:1.4em}
-.panel > h2{font-size:1.5em;font-weight:500;margin-bottom:.2em}
-.panel > .lede{color:var(--muted);font-size:.98em;margin-bottom:1.2em;max-width:70ch}
-.eyebrow{font-size:.72em;letter-spacing:.14em;text-transform:uppercase;color:var(--key);font-weight:600;margin-bottom:8px}
-
-/* ---------- the lock, shown ---------- */
-.compare{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.side{border-radius:10px;padding:18px;border:1px solid}
-.side.bad{background:rgba(255,92,122,.05);border-color:rgba(255,92,122,.25)}
-.side.good{background:rgba(94,232,155,.05);border-color:rgba(94,232,155,.25)}
-.side h3{font-size:1.05em;font-weight:500;margin-bottom:.2em}
-.side.bad h3{color:var(--broken)} .side.good h3{color:var(--sealed)}
-.side .who{font-size:.86em;color:var(--muted);margin-bottom:.8em}
-.payload{font-family:'IBM Plex Mono',monospace;font-size:.92em;line-height:1.8;
-  word-break:break-word;white-space:pre-wrap;background:rgba(0,0,0,.28);padding:12px;
-  border-radius:8px;min-height:96px}
-.side.bad .payload{color:var(--broken);word-break:break-all} .side.good .payload{color:var(--sealed)}
-.side .note{font-size:.86em;color:var(--faint);margin-top:.7em}
-
-/* ---------- attacks ---------- */
-.attacks{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
-@media(max-width:1000px){.attacks{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:560px){.attacks{grid-template-columns:1fr}}
-.atk{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:16px;
-  text-align:left;cursor:pointer;color:inherit;font:inherit;transition:.16s;display:flex;flex-direction:column;gap:6px}
-.atk:hover{border-color:var(--key);transform:translateY(-2px)}
-.atk:focus-visible{outline:2px solid var(--key);outline-offset:2px}
-.atk .plain{font-family:'Space Grotesk',sans-serif;font-size:1.08em;font-weight:500}
-.atk .what{font-size:.88em;color:var(--muted);flex:1}
-.atk .real{font-size:.74em;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);
-  font-family:'IBM Plex Mono',monospace}
-.atk .go{font-size:.88em;color:var(--key);font-weight:600;margin-top:2px}
-
-/* ---------- honest limits ---------- */
-.gaps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.gap{background:rgba(255,157,77,.05);border:1px solid rgba(255,157,77,.2);border-radius:10px;padding:16px}
-.gap h3{font-size:1.05em;font-weight:500;color:var(--heat);margin-bottom:8px}
-.gap p{font-size:.88em;color:var(--muted);margin-bottom:.5em}
-.gap .fix{font-size:.84em;color:var(--faint);margin:0;padding-top:8px;border-top:1px solid rgba(255,157,77,.15)}
-@media(max-width:860px){.gaps{grid-template-columns:1fr}}
-
-/* ---------- controls ---------- */
-.controls{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:center}
-.ctl label{font-size:.95em;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:8px}
-.ctl label b{color:var(--heat);font-family:'IBM Plex Mono',monospace;font-weight:500}
-input[type=range]{width:100%;accent-color:var(--heat);cursor:pointer}
-.btn{width:100%;padding:.8em;border-radius:9px;border:1px solid var(--line);background:var(--surface-2);
-  color:var(--ink);font:inherit;font-size:1em;cursor:pointer;transition:.16s}
-.btn:hover{border-color:var(--cool);color:var(--cool)}
-.btn:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
-.btn:disabled{opacity:.35;cursor:default;border-color:var(--line);color:var(--faint)}
-.btn:disabled:hover{border-color:var(--line);color:var(--faint)}
-.station.manual{border-color:rgba(255,157,77,.5)}
-.station.manual .sub{color:var(--heat)}
-
-/* ---------- activity log ---------- */
-.log{background:rgba(0,0,0,.32);border-radius:10px;padding:1em;height:15em;overflow-y:auto;
-  font-family:'IBM Plex Mono',monospace;font-size:.9em;line-height:1.9}
-.log p{display:flex;gap:9px}
-.log time{color:var(--faint);flex-shrink:0}
-.l-ok{color:var(--sealed)} .l-bad{color:var(--broken)} .l-warn{color:var(--heat)} .l-atk{color:var(--key)}
-
-/* ---------- under the hood ---------- */
-details.hood{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);margin-bottom:22px}
-details.hood summary{padding:1.3em 1.7em;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:1.2em;
-  font-weight:500;list-style:none;display:flex;justify-content:space-between;align-items:center}
-details.hood summary::-webkit-details-marker{display:none}
-details.hood summary::after{content:'Show';font-family:'IBM Plex Sans';font-size:12px;color:var(--key);font-weight:600}
-details.hood[open] summary::after{content:'Hide'}
-details.hood .body{padding:0 24px 24px}
-table{width:100%;border-collapse:collapse;font-size:.88em}
-th{text-align:left;color:var(--faint);font-weight:600;font-size:.78em;letter-spacing:.08em;
-  text-transform:uppercase;padding:8px;border-bottom:1px solid var(--line)}
-td{padding:9px 8px;border-bottom:1px solid rgba(46,56,96,.4);font-family:'IBM Plex Mono',monospace}
-.match{color:var(--sealed)} .nomatch{color:var(--broken);font-weight:600}
-.tag{color:var(--key)} .num{text-align:right;color:var(--muted)}
-.scroll{overflow-x:auto}
-.foot{color:var(--faint);font-size:.88em;margin-top:.9em;max-width:78ch}
-
-@media(max-width:860px){
-  .pipeline{grid-template-columns:1fr;gap:10px}
-  .wire{width:auto;height:44px;transform:rotate(90deg)}
-  .compare,.controls{grid-template-columns:1fr}
-}
-@media(prefers-reduced-motion:reduce){
-  *{animation:none!important;transition:none!important}
-}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<div class="wrap">
+<a href="#main" class="sr-only">Skip to controls</a>
+<div class="app">
 
-  <header class="masthead">
-    <div>
-      <h1>The Locked Thermometer</h1>
-      <p>A thermometer tells a computer how hot the room is. If it gets too hot, the computer
-         switches on a fan. Everything they say to each other is locked first — because
-         anyone can listen to a wire.</p>
-    </div>
-    <div class="live" id="live"><span class="dot"></span><span id="live-text">Connecting</span></div>
-  </header>
-
-  <!-- SIGNATURE: the message physically travels the wire -->
-  <div class="pipeline">
-    <div class="station">
-      <span class="icon">🌡️</span>
-      <div class="role">Step 1</div>
-      <div class="name">The thermometer</div>
-      <div class="reading" id="temp">--<span style="font-size:20px">°C</span></div>
-      <div class="sub" id="humidity">waiting for a reading</div>
-    </div>
-
-    <div class="wire" id="wire-in"><span class="packet">📦</span></div>
-
-    <div class="station">
-      <span class="icon">🧠</span>
-      <div class="role">Step 2</div>
-      <div class="name">The computer</div>
-      <div class="verdict" id="verdict" style="color:var(--muted)">watching</div>
-      <div class="sub">on above <span id="limit-echo" class="mono">30.0°C</span>, off a degree below</div>
-    </div>
-
-    <div class="wire" id="wire-out"><span class="packet">📦</span></div>
-
-    <div class="station">
-      <span class="icon">🌀</span>
-      <div class="role">Step 3</div>
-      <div class="name">The fan</div>
-      <div class="fan-state off" id="fan"><span class="spin">◍</span> OFF</div>
-      <div class="sub" id="fan-mode">automatic · only obeys orders with an unbroken seal</div>
-    </div>
+  <div class="bar">
+    <h1>Post-Quantum Secure Communication for IoT</h1>
+    <span class="sub">CRYSTALS-Kyber ML-KEM-768 · FIPS 203 · AES-256-GCM</span>
+    <span class="grow"></span>
+    <span class="chip" id="conn" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span><span id="conn-text">Connecting</span></span>
   </div>
-  <p class="wire-caption">📦 is one locked message. Watch it travel — a new one is sealed with a
-     <b>fresh lock</b> every few seconds.</p>
 
-  <!-- THE POINT -->
-  <section class="panel">
-    <div class="eyebrow">Why bother locking it</div>
-    <h2>The same message, seen by two people</h2>
-    <p class="lede">This is the real reading that just crossed the wire. On the left is what a
-       stranger listening to the network sees. On the right is what the computer sees, because
-       it is the only one holding the key.</p>
-    <div class="compare">
-      <div class="side bad">
-        <h3>🕵️ A stranger on the wire</h3>
-        <div class="who">Sees the locked box, not what's inside</div>
-        <div class="payload" id="cipher">waiting…</div>
-        <div class="note" id="cipher-note">Nonsense, on purpose. Without the key there is nothing to read.</div>
+  <!-- pipeline: sensor -> server -> actuator, with the live link between them -->
+  <section class="pipe" aria-label="Signal pipeline">
+    <article class="node">
+      <div class="top"><span class="name">Sensor node</span><span class="keytag">Key A</span></div>
+      <div class="big warn mono" id="temp" role="status" aria-live="polite" aria-label="Temperature">—— °C</div>
+      <div class="meta" id="humidity">Awaiting telemetry</div>
+      <div class="fine" id="fp-sensor">Key exchange pending</div>
+    </article>
+
+    <div class="link" id="link-in"><span class="tag">AES-256-GCM</span>
+      <div class="track" aria-hidden="true"></div><span class="tag">Key A</span></div>
+
+    <article class="node">
+      <div class="top"><span class="name">Central server</span>
+        <span class="keytag" id="decision" role="status" aria-live="polite">STANDBY</span></div>
+      <div class="meta" style="display:flex;justify-content:space-between">
+        <label for="limit">Trigger threshold</label><b class="mono" id="limit-label">30.0 °C</b></div>
+      <input id="limit" type="range" min="20" max="45" step="0.5" value="30"
+             aria-valuemin="20" aria-valuemax="45" aria-valuenow="30" aria-valuetext="30.0 degrees Celsius"
+             oninput="setLimit(this.value)">
+      <div class="fine">Engages above threshold, releases 1.0 °C below</div>
+    </article>
+
+    <div class="link" id="link-out"><span class="tag">AES-256-GCM</span>
+      <div class="track" aria-hidden="true"></div><span class="tag">Key B</span></div>
+
+    <article class="node" id="act-card">
+      <div class="top"><span class="name">Actuator node</span><span class="keytag">Key B</span></div>
+      <div class="big off mono" id="relay" role="status" aria-live="polite">RELAY OFF</div>
+      <div class="row" id="main">
+        <button class="btn" onclick="flip()" title="Toggle the relay (keyboard: F)">Toggle relay<kbd aria-hidden="true">F</kbd></button>
+        <button class="btn" id="auto-btn" onclick="resume()" disabled
+                title="Return to automatic control (keyboard: A)">Automatic<kbd aria-hidden="true">A</kbd></button>
       </div>
-      <div class="side good">
-        <h3>🔓 The computer with the key</h3>
-        <div class="who">Opens the box and reads the room</div>
-        <div class="payload" id="plain">waiting…</div>
-        <div class="note">If the wire were not locked, the left box would read exactly like this one.</div>
-      </div>
-    </div>
+      <div class="fine" id="mode">Automatic control · GCM tag verified before actuation</div>
+    </article>
   </section>
 
-  <!-- ATTACKS, IN PLAIN WORDS -->
-  <section class="panel">
-    <div class="eyebrow">Try to break it</div>
-    <h2>Five attacks this does stop</h2>
-    <p class="lede">Press one. It really runs against the live system, and the activity log below
-       shows what happened. These are not every possible attack — the honest list of what still
-       gets through is further down.</p>
-    <div class="attacks">
-      <button class="atk" onclick="attack('shor')">
-        <span class="plain">Work out the key</span>
-        <span class="what">Quantum computers can solve the old lock-making maths. Today's internet locks fall apart.</span>
-        <span class="real">Shor's algorithm</span><span class="go">Run →</span>
-      </button>
-      <button class="atk" onclick="attack('kyber')">
-        <span class="plain">Work out the new key</span>
-        <span class="what">Our locks are built on a different puzzle, one no quantum computer knows how to solve.</span>
-        <span class="real">Lattice / Module-LWE</span><span class="go">Run →</span>
-      </button>
-      <button class="atk" onclick="attack('harvest')">
-        <span class="plain">Record now, open later</span>
-        <span class="what">Save today's messages, wait years for a better computer. Every message uses a different lock, so there is nothing to come back to.</span>
-        <span class="real">Harvest now, decrypt later</span><span class="go">Run →</span>
-      </button>
-      <button class="atk" onclick="attack('mitm')">
-        <span class="plain">Send a fake order</span>
-        <span class="what">Shout a made-up order at the fan. The seal doesn't match, so the fan ignores it.</span>
-        <span class="real">Man-in-the-middle tampering</span><span class="go">Run →</span>
-      </button>
-      <button class="atk" onclick="attack('grover')">
-        <span class="plain">Guess every key</span>
-        <span class="what">Try all of them very fast. A short key would fall. Ours is long enough that it still doesn't.</span>
-        <span class="real">Grover's algorithm</span><span class="go">Run →</span>
-      </button>
-    </div>
-  </section>
+  <div class="main">
 
-  <!-- The limits, stated plainly. A threat model you can't state isn't one. -->
-  <section class="panel" style="border-color:rgba(255,157,77,.3)">
-    <div class="eyebrow" style="color:var(--heat)">Being honest</div>
-    <h2>What this does <em>not</em> stop</h2>
-    <p class="lede">Every security system has a boundary. Here is where this one ends —
-       tested, not guessed.</p>
-    <div class="gaps">
-      <div class="gap">
-        <h3>Someone pretending to be the fan</h3>
-        <p>Nothing proves a device is who it says it is. Anything that connects and claims to be
-           the fan gets its own key and receives real orders.</p>
-        <p class="fix">Fixed by signing device identities — ML-DSA. Listed as future work.</p>
-      </div>
-      <div class="gap">
-        <h3>Someone sitting in the middle from the start</h3>
-        <p>The key agreement proves nobody <em>watched</em>, not who you agreed with. An attacker
-           present from the first message can hold one conversation with each side and read
-           everything.</p>
-        <p class="fix">Same fix: signed handshakes.</p>
-      </div>
-      <div class="gap">
-        <h3>Anyone who can reach this page</h3>
-        <p>These controls have no login. Whoever opens the dashboard can move the limit and
-           switch the fan.</p>
-        <p class="fix">Fine on a closed lab network, not on a real one.</p>
-      </div>
-    </div>
-    <p class="foot">Replay was on this list until we tested for it. A captured message is now
-       accepted exactly once — send it twice and the second copy is refused.</p>
-  </section>
+    <!-- attack list -->
+    <section class="pane">
+      <div class="head"><h2>Attack simulations</h2><span class="hint">Keys 1–5</span></div>
+      <div class="body" id="atk-list"></div>
+    </section>
 
-  <!-- CONTROLS + LOG -->
-  <section class="panel">
-    <div class="eyebrow">Have a go</div>
-    <h2>Make the fan turn on</h2>
-    <p class="lede">Drag the limit below the room temperature. The computer will seal an order and
-       send it, and the fan will check the seal before it moves.</p>
-    <div class="controls">
-      <div class="ctl">
-        <label for="limit">Turn the fan on above <b id="limit-label">30.0 °C</b></label>
-        <input id="limit" type="range" min="20" max="45" step="0.5" value="30"
-               oninput="setLimit(this.value)">
+    <!-- finding detail: the attack name dominates -->
+    <section class="pane">
+      <div class="head"><h2>Finding</h2><span class="hint" id="finding-time"></span></div>
+      <div class="body finding" id="finding" role="region" aria-live="polite" aria-label="Attack finding detail">
+        <p class="empty">Select an attack on the left, or press 1–5.<br><br>
+           The full finding appears here: severity, target, detection status, evidence
+           collected during the run, and the mitigation that applies.</p>
       </div>
-      <div style="display:grid;gap:.6em">
-        <button class="btn" onclick="flip()">Switch the fan by hand</button>
-        <button class="btn" id="auto-btn" onclick="resume()" disabled>Back to automatic</button>
+    </section>
+
+    <!-- tabs -->
+    <section class="pane">
+      <div class="head">
+        <div class="tabs" role="tablist" aria-label="Detail views">
+          <button class="tab" role="tab" id="tab-0" aria-controls="pane-0" aria-selected="true" tabindex="0" onclick="tab(0)">Event log</button>
+          <button class="tab" role="tab" id="tab-1" aria-controls="pane-1" aria-selected="false" tabindex="-1" onclick="tab(1)">Key exchange</button>
+          <button class="tab" role="tab" id="tab-2" aria-controls="pane-2" aria-selected="false" tabindex="-1" onclick="tab(2)">Channel payload</button>
+          <button class="tab" role="tab" id="tab-3" aria-controls="pane-3" aria-selected="false" tabindex="-1" onclick="tab(3)">Limitations</button>
+        </div>
       </div>
-    </div>
-  </section>
+      <div class="body">
+        <div id="pane-0" role="tabpanel" aria-labelledby="tab-0" tabindex="0">
+          <div id="log" aria-live="polite" aria-label="Security event log">
+            <p><time>--:--:--</time><span style="color:var(--faint)">Waiting for telemetry…</span></p>
+          </div>
+        </div>
 
-  <section class="panel">
-    <div class="eyebrow">Activity</div>
-    <h2>Everything happening, as it happens</h2>
-    <div class="log" id="log"><p><time>--:--:--</time><span style="color:var(--faint)">Waiting for the thermometer…</span></p></div>
-  </section>
+        <div id="pane-1" role="tabpanel" aria-labelledby="tab-1" tabindex="0" hidden>
+          <table>
+            <thead><tr><th scope="col">Node</th><th scope="col">Transport</th>
+              <th scope="col" class="num">ek</th><th scope="col" class="num">ct</th>
+              <th scope="col">Node key</th><th scope="col">Server key</th><th scope="col">Match</th></tr></thead>
+            <tbody id="sessions"><tr><td colspan="7" style="color:var(--faint)">No nodes connected</td></tr></tbody>
+          </table>
+          <p class="fine" style="margin-top:.7em;white-space:normal">Independent ML-KEM-768 exchange per link.
+            Key material is never transmitted; fingerprints are SHA-256 digests proving both parties
+            derived the same key. Differing fingerprints across rows demonstrate Dual-KEM separation.</p>
+        </div>
 
-  <!-- THE TECHNICAL LAYER, AVAILABLE BUT NOT SHOUTING -->
-  <details class="hood">
-    <summary>Under the hood — the actual cryptography</summary>
-    <div class="body">
-      <div class="scroll">
-        <table>
-          <thead><tr>
-            <th>Node</th><th>Key exchange</th><th>Carried over</th>
-            <th class="num">Public key</th><th class="num">Ciphertext</th><th class="num">Session key</th>
-            <th>Node derived</th><th>Server derived</th><th>Agreed</th>
-          </tr></thead>
-          <tbody id="sessions">
-            <tr><td colspan="9" style="color:var(--faint)">No nodes connected yet.</td></tr>
-          </tbody>
-        </table>
+        <div id="pane-2" role="tabpanel" aria-labelledby="tab-2" tabindex="0" hidden>
+          <div class="wbox e"><div class="t"><span>Ciphertext on the wire</span><span id="wire-size">—</span></div>
+            <div class="hex" id="cipher">Awaiting telemetry</div></div>
+          <div class="wbox d"><div class="t"><span>After AES-256-GCM decryption</span><span>server only</span></div>
+            <div class="plain" id="plain">Awaiting telemetry</div></div>
+        </div>
+
+        <div id="pane-3" role="tabpanel" aria-labelledby="tab-3" tabindex="0" hidden>
+          <div class="gap"><b>No device authentication</b><span>Role is asserted, not proven. A client
+            claiming to be the actuator completes a handshake and decrypts commands. Mitigation: ML-DSA
+            device signatures.</span></div>
+          <div class="gap"><b>Unauthenticated key exchange</b><span>Resists passive interception, not an
+            adversary present from the first packet. Mitigation: signed handshakes.</span></div>
+          <div class="gap"><b>No dashboard access control</b><span>Any client reaching this interface can
+            alter the threshold and actuate the relay. Isolated lab networks only.</span></div>
+          <p class="fine" style="white-space:normal">Replay was on this list until tested for. Captured
+            packets are now accepted exactly once per session key; duplicates rejected with HTTP 409.</p>
+        </div>
       </div>
-      <p class="foot">Each node agrees its own key with the server using <b>ML-KEM-768</b>
-         (CRYSTALS-Kyber, NIST FIPS 203). The key itself never crosses the wire — both sides
-         derive it independently, and the fingerprints above are SHA-256 digests proving they
-         landed on the same one. The thermometer and the fan hold <b>different</b> keys, so
-         breaking one leg gives you nothing on the other. Messages are sealed with
-         AES-256-GCM, whose authentication tag is the wax seal the fan checks.</p>
-    </div>
-  </details>
-
+    </section>
+  </div>
 </div>
 
 <script>
-const socket = io();
-const $ = id => document.getElementById(id);
+const socket = io(), $ = id => document.getElementById(id);
+
+const ATTACKS = [
+  {id:'shor',    n:'1', name:"Shor's Algorithm",                    sev:'CRITICAL'},
+  {id:'kyber',   n:'2', name:'Lattice Reduction (BKZ)',             sev:'CRITICAL'},
+  {id:'harvest', n:'3', name:'Harvest Now, Decrypt Later',          sev:'HIGH'},
+  {id:'mitm',    n:'4', name:'Man-in-the-Middle Command Injection', sev:'CRITICAL'},
+  {id:'grover',  n:'5', name:"Grover's Algorithm",                  sev:'MEDIUM'},
+];
+const findings = {};
+let selected = null;
+
+$('atk-list').innerHTML = ATTACKS.map(a => `
+  <button class="atk" id="atk-${a.id}" aria-pressed="false" onclick="run('${a.id}')"
+          title="Run ${a.name}">
+    <span class="n" aria-hidden="true">${a.n}</span>
+    <span><span class="nm">${a.name}</span><span class="st" id="st-${a.id}">Not run</span></span>
+    <span class="sev sev-${a.sev}">${a.sev}</span>
+  </button>`).join('');
+
+function run(id) {
+  select(id);
+  const st = $('st-' + id);
+  st.className = 'st run'; st.textContent = 'Running…';
+  socket.emit('trigger_attack', {attack_type: id});
+}
+
+function select(id) {
+  selected = id;
+  ATTACKS.forEach(a => $('atk-' + a.id).setAttribute('aria-pressed', String(a.id === id)));
+  render(id);
+}
+
+function render(id) {
+  const f = findings[id], meta = ATTACKS.find(a => a.id === id);
+  $('finding-time').textContent = f ? f.detected_at : '';
+  if (!f) {
+    $('finding').innerHTML =
+      `<div class="title">${meta.name}</div>
+       <div class="chips"><span class="sev-${meta.sev}">${meta.sev}</span></div>
+       <p class="empty">Not yet run. Press ${meta.n} or select it again to execute this
+          simulation against the live system.</p>`;
+    return;
+  }
+  const stClass = 'st-' + (f.status.startsWith('NOT') ? 'NOT' : f.status);
+  $('finding').innerHTML = `
+    <div class="title">${f.name}</div>
+    <div class="chips">
+      <span class="sev-${f.severity}">${f.severity}</span>
+      <span class="${stClass}">${f.status}</span>
+      <span class="st-NOT">${f.confidence}</span>
+    </div>
+    <dl>
+      <dt>Attack family</dt><dd>${f.family}</dd>
+      <dt>Target</dt><dd>${f.target}</dd>
+      <dt>Detected at</dt><dd class="mono">${f.detected_at}</dd>
+    </dl>
+    <div class="block"><h3>Attack vector</h3><p>${f.vector}</p></div>
+    <div class="block"><h3>Potential impact</h3><p>${f.impact}</p></div>
+    <div class="block"><h3>Evidence collected</h3><p>${f.evidence}</p></div>
+    <div class="block"><h3>Outcome</h3><p>${f.outcome}</p></div>
+    <div class="block"><h3>Mitigation in place</h3><p>${f.mitigation}</p></div>`;
+}
+
+socket.on('attack_result', f => {
+  findings[f.id] = f;
+  const st = $('st-' + f.id);
+  st.textContent = f.status;
+  st.className = 'st ' + (f.status === 'DEFENDED' ? 'def' : 'na');
+  if (selected === f.id) render(f.id);
+  else if (selected === null) select(f.id);
+});
+socket.on('attack_findings', d => {
+  (d.findings || []).forEach(f => {
+    findings[f.id] = f;
+    const st = $('st-' + f.id);
+    if (st) { st.textContent = f.status; st.className = 'st ' + (f.status === 'DEFENDED' ? 'def' : 'na'); }
+  });
+});
 
 socket.on('connect', () => {
-  $('live').classList.add('on'); $('live-text').textContent = 'Live';
+  $('conn').classList.add('on'); $('conn-text').textContent = 'Connected';
   socket.emit('dashboard_ready');
 });
 socket.on('disconnect', () => {
-  $('live').classList.remove('on'); $('live-text').textContent = 'Disconnected';
+  $('conn').classList.remove('on'); $('conn-text').textContent = 'Disconnected';
 });
 
-function ride(wire, broken) {
-  const el = $(wire), cls = broken ? 'broken' : 'busy';
-  el.classList.remove('busy', 'broken');
-  void el.offsetWidth;                     // restart the animation
-  el.classList.add(cls);
-  setTimeout(() => el.classList.remove(cls), broken ? 700 : 1100);
+function pulse(el, reject) {
+  el.classList.remove('active','reject'); void el.offsetWidth;
+  el.classList.add(reject ? 'reject' : 'active');
 }
 
 socket.on('update_telemetry', d => {
-  $('temp').innerHTML = d.temp + '<span style="font-size:20px">°C</span>';
-  $('humidity').textContent = 'humidity ' + d.humidity + '%';
+  $('temp').textContent = d.temp.toFixed(2) + ' °C';
+  $('humidity').textContent = 'Relative humidity ' + d.humidity.toFixed(2) + ' %';
+  pulse($('link-in'), false);
   if (d.threshold !== undefined) {
-    $('limit').value = d.threshold;
+    const l = $('limit');
+    l.value = d.threshold;
+    l.setAttribute('aria-valuenow', d.threshold);
+    l.setAttribute('aria-valuetext', d.threshold.toFixed(1) + ' degrees Celsius');
     $('limit-label').textContent = d.threshold.toFixed(1) + ' °C';
-    $('limit-echo').textContent = d.threshold.toFixed(1) + '°C';
   }
   if (d.too_hot !== undefined) {
-    $('verdict').textContent = d.too_hot ? 'too hot' : 'all fine';
-    $('verdict').style.color = d.too_hot ? 'var(--heat)' : 'var(--sealed)';
+    $('decision').textContent = d.too_hot ? 'ABOVE THRESHOLD' : 'NOMINAL';
+    $('decision').style.color = d.too_hot ? 'var(--warn)' : 'var(--ok)';
   }
-  if (d.relay) setFan(d.relay);
+  if (d.relay) setRelay(d.relay);
   if (d.manual !== undefined) setMode(d.manual);
-  ride('wire-in', false);
-
   if (d.wire && d.wire.ciphertext) {
     $('cipher').textContent = d.wire.nonce + d.wire.ciphertext;
-    $('cipher-note').textContent =
-      `${d.wire.bytes_on_wire} bytes of nonsense, on purpose. A new lock every message.`;
-    $('plain').textContent = `it is ${d.temp}°C in the room\nhumidity is ${d.humidity}%`;
+    $('plain').textContent = JSON.stringify({temperature:d.temp, humidity:d.humidity}, null, 2);
+    $('wire-size').textContent = d.wire.bytes_on_wire + ' bytes';
   }
 });
 
-function setFan(state) {
-  const on = state === 'ON';
-  $('fan').className = 'fan-state ' + (on ? 'on' : 'off');
-  $('fan').innerHTML = '<span class="spin">◍</span> ' + (on ? 'ON' : 'OFF');
+function setRelay(s) {
+  const on = s === 'ON';
+  $('relay').className = 'big mono ' + (on ? 'info' : 'off');
+  $('relay').textContent = on ? 'RELAY ON' : 'RELAY OFF';
 }
-socket.on('update_actuator_ui', d => setFan(d.relay));
+function setMode(m) {
+  $('act-card').classList.toggle('alert', m);
+  $('mode').textContent = m ? 'Manual control · automatic regulation suspended'
+                            : 'Automatic control · GCM tag verified before actuation';
+  $('auto-btn').disabled = !m;
+}
+socket.on('update_actuator_ui', d => setRelay(d.relay));
 
 socket.on('security_log', l => {
-  const cls = {SUCCESS:'l-ok', ERROR:'l-bad', ALERT:'l-warn', ATTACK:'l-atk'}[l.type] || 'l-ok';
-  // The wire animation is the only thing that reads the log, and only to know
-  // that a command moved. Everything else comes from update_telemetry.
-  if (l.type === 'ALERT' && /Sending sealed|Operator override/.test(l.msg)) ride('wire-out', false);
-  if (/REJECTED|Tampering/.test(l.msg)) ride('wire-out', true);
-
-  const log = $('log');
-  const p = document.createElement('p');
-  p.innerHTML = `<time>${new Date().toLocaleTimeString()}</time><span class="${cls}"></span>`;
+  const cls = {SUCCESS:'l-ok',ERROR:'l-bad',ALERT:'l-warn',ATTACK:'l-atk'}[l.type] || 'l-ok';
+  if (l.type === 'ALERT' && /Sending sealed|Manual control/.test(l.msg)) pulse($('link-out'), false);
+  if (/REJECTED|Tampering/.test(l.msg)) pulse($('link-out'), true);
+  const log = $('log'), p = document.createElement('p');
+  p.innerHTML = '<time></time><span class="' + cls + '"></span>';
+  p.querySelector('time').textContent = new Date().toLocaleTimeString();
   p.querySelector('span').textContent = l.msg;
-  log.appendChild(p);
-  log.scrollTop = log.scrollHeight;
-  while (log.children.length > 220) log.removeChild(log.firstChild);
+  log.appendChild(p); log.parentElement.scrollTop = log.parentElement.scrollHeight;
+  while (log.children.length > 300) log.removeChild(log.firstChild);
 });
 
 socket.on('pqc_status', d => {
-  const body = $('sessions'), rows = d.sessions || [];
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="9" style="color:var(--faint)">No nodes connected yet.</td></tr>';
-    return;
-  }
-  body.innerHTML = rows.map(s => `
-    <tr>
-      <td class="tag">${s.node}</td>
-      <td>${s.kem}</td>
-      <td>${s.transport === 'mqtt' ? 'MQTT · TLS 1.3' : 'WebSocket'}</td>
-      <td class="num">${s.public_key_bytes} B</td>
-      <td class="num">${s.ciphertext_bytes} B</td>
-      <td class="num">${s.aes_key_bits}-bit</td>
-      <td class="tag">${s.node_fingerprint}</td>
-      <td class="tag">${s.server_fingerprint}</td>
-      <td class="${s.agreed ? 'match' : 'nomatch'}">${s.agreed ? 'yes' : 'NO'}</td>
-    </tr>`).join('');
+  const rows = d.sessions || [];
+  $('sessions').innerHTML = rows.length ? rows.map(s => `
+    <tr><td class="k">${s.node}</td><td>${s.transport === 'mqtt' ? 'MQTT/TLS 1.3' : 'WebSocket'}</td>
+      <td class="num">${s.public_key_bytes}</td><td class="num">${s.ciphertext_bytes}</td>
+      <td class="k">${s.node_fingerprint}</td><td class="k">${s.server_fingerprint}</td>
+      <td class="${s.agreed ? 'ok':'no'}">${s.agreed ? 'YES':'NO'}</td></tr>`).join('')
+    : '<tr><td colspan="7" style="color:var(--faint)">No nodes connected</td></tr>';
+  const sensor = rows.find(s => s.role === 'sensor');
+  $('fp-sensor').textContent = sensor
+    ? 'ML-KEM-768 · session key ' + sensor.server_fingerprint : 'Key exchange pending';
 });
 
-function setMode(manual) {
-  const card = $('fan').closest('.station');
-  card.classList.toggle('manual', manual);
-  $('fan-mode').textContent = manual
-    ? 'manual · the thermostat is paused'
-    : 'automatic · only obeys orders with an unbroken seal';
-  $('auto-btn').disabled = !manual;
-}
-
-function attack(kind) { socket.emit('trigger_attack', {attack_type: kind}); }
-function flip() { socket.emit('toggle_actuator_override'); setMode(true); }
-function resume() { socket.emit('resume_automatic'); setMode(false); }
-function setLimit(v) {
-  const t = parseFloat(v).toFixed(1);
-  $('limit-label').textContent = t + ' °C';
-  $('limit-echo').textContent = t + '°C';
+function flip(){ socket.emit('toggle_actuator_override'); setMode(true); }
+function resume(){ socket.emit('resume_automatic'); setMode(false); }
+function setLimit(v){
+  const l = $('limit');
+  l.setAttribute('aria-valuenow', v);
+  l.setAttribute('aria-valuetext', parseFloat(v).toFixed(1) + ' degrees Celsius');
+  $('limit-label').textContent = parseFloat(v).toFixed(1) + ' °C';
   socket.emit('set_threshold', {threshold: parseFloat(v)});
 }
+function tab(i){
+  [0,1,2,3].forEach(n => {
+    const t = $('tab-' + n);
+    t.setAttribute('aria-selected', String(n === i));
+    t.tabIndex = n === i ? 0 : -1;
+    $('pane-' + n).hidden = n !== i;
+  });
+  $('tab-' + i).focus();
+}
+
+document.querySelector('[role=tablist]').addEventListener('keydown', e => {
+  const cur = [0,1,2,3].find(n => $('tab-' + n).getAttribute('aria-selected') === 'true');
+  if (e.key === 'ArrowRight') { e.preventDefault(); tab((cur + 1) % 4); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); tab((cur + 3) % 4); }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea, [contenteditable]')) return;
+  const n = ['1','2','3','4','5'].indexOf(e.key);
+  if (n > -1) { run(ATTACKS[n].id); return; }
+  if (e.key === 'f' || e.key === 'F') flip();
+  if ((e.key === 'a' || e.key === 'A') && !$('auto-btn').disabled) resume();
+});
 </script>
 </body>
 </html>

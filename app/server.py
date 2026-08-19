@@ -36,6 +36,7 @@ class CentralServer:
         # Manual control has to suspend the thermostat. Without this the next
         # reading above the limit immediately undoes whatever the operator did.
         self.manual_mode = False
+        self.findings = {}  # attack id -> last structured result
         self.pending_handshakes = {}  # sid -> (role, decapsulation_key)
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
@@ -120,6 +121,25 @@ mqtt_bridge = None  # set by --mqtt at startup
 
 def log(log_type, msg):
     socketio.emit("security_log", {"type": log_type, "msg": msg})
+
+
+def report_attack(identifier, status, confidence, evidence, outcome):
+    """Publishes a full finding: name, severity, target, evidence, mitigation."""
+    record = dict(attacks.describe(identifier))
+    record.update(
+        id=identifier,
+        status=status,
+        confidence=confidence,
+        evidence=evidence,
+        outcome=outcome,
+        detected_at=time.strftime("%H:%M:%S"),
+    )
+    server_engine.findings[identifier] = record
+    socketio.emit("attack_result", record)
+
+
+def broadcast_findings():
+    socketio.emit("attack_findings", {"findings": list(server_engine.findings.values())})
 
 
 def broadcast_pqc_status():
@@ -342,6 +362,7 @@ def handle_trigger_attack(data):
         attack_type,
         log,
         socketio.sleep,
+        report_attack,
         server_side_public_key,
         deliver_raw_to_actuators,
     )
@@ -381,8 +402,9 @@ def handle_set_threshold(data):
 
 @socketio.on("dashboard_ready")
 def handle_dashboard_ready():
-    """A dashboard that connects mid-run still needs the current table."""
+    """A dashboard that connects mid-run still needs the current state."""
     broadcast_pqc_status()
+    broadcast_findings()
 
 
 @socketio.on("disconnect")

@@ -37,9 +37,19 @@ def obtain_public_key():
 
 def launch_quantum_attack_sequence():
     sio.connect(SERVER_URL)
+    def report(identifier, status, confidence, evidence, outcome):
+        meta = attacks.describe(identifier)
+        print(f"\n  {meta.get('name', identifier)}  [{meta.get('severity','-')}]")
+        print(f"    status     : {status}  ({confidence})")
+        print(f"    target     : {meta.get('target','-')}")
+        print(f"    evidence   : {evidence}")
+        print(f"    outcome    : {outcome}")
+        print(f"    mitigation : {meta.get('mitigation','-')}\n")
+
     attacks.run_all(
         log=log,
         sleep=sio.sleep,
+        report=report,
         obtain_public_key=obtain_public_key,
         deliver=lambda packet: sio.emit("mitm_inject", packet),
     )
