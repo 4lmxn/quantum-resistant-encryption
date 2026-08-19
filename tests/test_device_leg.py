@@ -35,6 +35,18 @@ def test_server_rejects_forged_device_packet():
     assert response.json()["status"] == "rejected"
 
 
+def test_replayed_device_packet_is_rejected():
+    """A captured packet must be usable exactly once, even though it is valid."""
+    packet = seal_like_esp32(31.0, 44.0)
+
+    first = requests.post(f"{SERVER_URL}/telemetry", json=packet)
+    assert first.status_code == 200, "a fresh packet should be accepted"
+
+    replay = requests.post(f"{SERVER_URL}/telemetry", json=packet)
+    assert replay.status_code == 409, "the same packet was accepted twice"
+    assert replay.json()["status"] == "replay"
+
+
 if __name__ == "__main__":
     for name, check in sorted(globals().items()):
         if name.startswith("test_"):

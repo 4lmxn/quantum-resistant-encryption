@@ -107,6 +107,14 @@ h1,h2,h3{font-family:'Space Grotesk',sans-serif;line-height:1.2}
   font-family:'IBM Plex Mono',monospace}
 .atk .go{font-size:12px;color:var(--key);font-weight:600;margin-top:2px}
 
+/* ---------- honest limits ---------- */
+.gaps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.gap{background:rgba(255,157,77,.05);border:1px solid rgba(255,157,77,.2);border-radius:10px;padding:16px}
+.gap h3{font-size:14.5px;font-weight:500;color:var(--heat);margin-bottom:8px}
+.gap p{font-size:12.5px;color:var(--muted);margin-bottom:8px}
+.gap .fix{font-size:12px;color:var(--faint);margin:0;padding-top:8px;border-top:1px solid rgba(255,157,77,.15)}
+@media(max-width:860px){.gaps{grid-template-columns:1fr}}
+
 /* ---------- controls ---------- */
 .controls{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:center}
 .ctl label{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:8px}
@@ -223,9 +231,10 @@ td{padding:9px 8px;border-bottom:1px solid rgba(46,56,96,.4);font-family:'IBM Pl
   <!-- ATTACKS, IN PLAIN WORDS -->
   <section class="panel">
     <div class="eyebrow">Try to break it</div>
-    <h2>Five ways someone could attack this</h2>
+    <h2>Five attacks this does stop</h2>
     <p class="lede">Press one. It really runs against the live system, and the activity log below
-       shows what happened.</p>
+       shows what happened. These are not every possible attack — the honest list of what still
+       gets through is further down.</p>
     <div class="attacks">
       <button class="atk" onclick="attack('shor')">
         <span class="plain">Work out the key</span>
@@ -253,6 +262,37 @@ td{padding:9px 8px;border-bottom:1px solid rgba(46,56,96,.4);font-family:'IBM Pl
         <span class="real">Grover's algorithm</span><span class="go">Run →</span>
       </button>
     </div>
+  </section>
+
+  <!-- The limits, stated plainly. A threat model you can't state isn't one. -->
+  <section class="panel" style="border-color:rgba(255,157,77,.3)">
+    <div class="eyebrow" style="color:var(--heat)">Being honest</div>
+    <h2>What this does <em>not</em> stop</h2>
+    <p class="lede">Every security system has a boundary. Here is where this one ends —
+       tested, not guessed.</p>
+    <div class="gaps">
+      <div class="gap">
+        <h3>Someone pretending to be the fan</h3>
+        <p>Nothing proves a device is who it says it is. Anything that connects and claims to be
+           the fan gets its own key and receives real orders.</p>
+        <p class="fix">Fixed by signing device identities — ML-DSA. Listed as future work.</p>
+      </div>
+      <div class="gap">
+        <h3>Someone sitting in the middle from the start</h3>
+        <p>The key agreement proves nobody <em>watched</em>, not who you agreed with. An attacker
+           present from the first message can hold one conversation with each side and read
+           everything.</p>
+        <p class="fix">Same fix: signed handshakes.</p>
+      </div>
+      <div class="gap">
+        <h3>Anyone who can reach this page</h3>
+        <p>These controls have no login. Whoever opens the dashboard can move the limit and
+           switch the fan.</p>
+        <p class="fix">Fine on a closed lab network, not on a real one.</p>
+      </div>
+    </div>
+    <p class="foot">Replay was on this list until we tested for it. A captured message is now
+       accepted exactly once — send it twice and the second copy is refused.</p>
   </section>
 
   <!-- CONTROLS + LOG -->

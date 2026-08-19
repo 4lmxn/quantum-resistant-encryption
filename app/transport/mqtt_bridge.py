@@ -73,6 +73,9 @@ class MqttBridge:
         if session_key is None:
             self.log("ERROR", "[MQTT] Telemetry from a node with no ML-KEM session. Dropped.")
             return
+        if not self.engine.accept_nonce(node_id, packet.get("nonce", "")):
+            self.log("ERROR", "[MQTT] REPLAY BLOCKED: packet already accepted.")
+            return
         try:
             data = self.engine.decrypt_sensor_data(session_key, packet)
         except Exception as exc:

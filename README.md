@@ -149,6 +149,28 @@ Run `make` on its own to list every command.
 
 ## Honest limitations
 
+These were found by attacking the running system, not by reasoning about it.
+`docs/` has no separate threat model — this list is it.
+
+**Still exploitable:**
+
+- **No device authentication.** Role is claimed, not proved: a client that says
+  it is the actuator completes a handshake and receives decryptable commands.
+- **The handshake is unauthenticated.** It resists eavesdropping, not an active
+  attacker present from the first packet. ML-DSA signatures are the fix for both.
+- **No auth on the dashboard.** Anyone who reaches the page can move the
+  threshold and switch the relay.
+- **`DEVICE_PSK` ships in this repository.** Override it with the `DEVICE_PSK`
+  environment variable; the committed value is a demo key and forgeable by anyone
+  reading the source.
+
+**Fixed after testing:**
+
+- **Replay** — the server records the nonce of every accepted packet, so a
+  captured packet is usable exactly once. Second copy gets HTTP 409.
+
+**Other caveats:**
+
 - Stage 1 of the attack demo is narration, not a real cryptanalysis.
 - No certificate or signature layer: the ML-KEM handshake is unauthenticated, so
   it resists eavesdropping but not an active impersonator who can sit in the

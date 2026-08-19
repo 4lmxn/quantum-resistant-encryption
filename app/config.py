@@ -1,3 +1,4 @@
+import os
 import pathlib
 
 # config.py
@@ -8,7 +9,11 @@ import pathlib
 # Provisioned pre-shared key for the constrained ESP32 node only. A
 # microcontroller flashed at the factory has no handshake partner at boot, so
 # this leg falls back to a burned-in key. Exactly 32 bytes for AES-256-GCM.
-DEVICE_PSK = b"esp32_provisioned_aes256_key_32B"
+# WARNING: this is a demo key committed to the repository, so anyone reading the
+# source can forge ESP32 telemetry. Override it in any real deployment:
+#   export DEVICE_PSK="<32 bytes>"
+DEVICE_PSK = os.environ.get("DEVICE_PSK", "esp32_provisioned_aes256_key_32B").encode()
+assert len(DEVICE_PSK) == 32, "DEVICE_PSK must be exactly 32 bytes for AES-256"
 
 TEMP_THRESHOLD = 30.0
 

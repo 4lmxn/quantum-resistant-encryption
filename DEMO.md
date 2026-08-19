@@ -149,12 +149,42 @@ make test-device
 
 ---
 
+## 7. "And here is what it does not stop" — 45 seconds
+
+**Do not skip this.** Scroll to the honest-limits panel and walk it yourself.
+
+> Three things get through. Anything can claim to be the fan and receive real
+> orders, because nothing proves device identity. An attacker present from the
+> very first packet can sit in the middle of the key agreement. And the dashboard
+> controls have no login.
+>
+> All three have the same fix — signed device identities, ML-DSA — which is the
+> future work in Chapter 6.
+>
+> Replay was on that list until we tested for it. A captured packet is now
+> accepted exactly once; `test_replayed_device_packet_is_rejected` proves it.
+
+Volunteering this is worth more than any demo. It shows you know where your
+threat model ends, which is the difference between a project that works and a
+project you understand.
+
+---
+
 ## Questions you should expect
 
 **"Is the handshake authenticated?"**
-No. It resists eavesdropping, not an active attacker sitting in the middle from
-the first packet. Production would add ML-DSA signatures. *(Say this before they
-ask — volunteering it reads as understanding, not oversight.)*
+No, and that is the single biggest limitation. It resists eavesdropping, not an
+active attacker present from the first packet. ML-DSA signatures are the fix and
+are named as future work. *(Say this before they ask.)*
+
+**"Can I replay a captured packet?"**
+No. The server records the nonce of every packet it accepts under a given key, so
+a captured packet is accepted exactly once. The second copy gets HTTP 409.
+
+**"Could I pretend to be the actuator?"**
+Yes. That is a real gap — we tested it. Role is claimed, not proved, so a rogue
+client completes a handshake and receives decryptable commands. It needs device
+authentication, which is the same ML-DSA work.
 
 **"Why is AES-256 quantum-safe?"**
 Grover's algorithm halves the effective key length: 256-bit becomes 128-bit

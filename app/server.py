@@ -33,6 +33,11 @@ class CentralServer:
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
         self.sessions = {}  # sid -> display record for the dashboard panel
+        # A GCM nonce must never repeat under one key. Recording the nonces we
+        # have already accepted turns a captured packet into a single-use token,
+        # which is what stops a replay.
+        self.seen_nonces = {}  # scope -> set of nonce hex
+        self.replays_blocked = 0
 
     def begin_handshake(self, sid, role):
         encapsulation_key, decapsulation_key = generate_keypair()
@@ -64,8 +69,22 @@ class CentralServer:
         }
         return role
 
+    def accept_nonce(self, scope, nonce_hex):
+        """False if this nonce has already been used under this key."""
+        seen = self.seen_nonces.setdefault(scope, set())
+        if nonce_hex in seen:
+            self.replays_blocked += 1
+            return False
+        # ponytail: unbounded per-session growth is fine for a demo lifetime;
+        # a long-lived deployment wants a sliding window or a timestamp check.
+        if len(seen) > 50000:
+            seen.clear()
+        seen.add(nonce_hex)
+        return True
+
     def forget(self, sid):
         self.pending_handshakes.pop(sid, None)
+        self.seen_nonces.pop(sid, None)
         self.sensor_keys.pop(sid, None)
         self.actuator_keys.pop(sid, None)
         self.sessions.pop(sid, None)
@@ -187,6 +206,10 @@ def http_telemetry():
     except Exception as exc:
         log("ERROR", f"[SERVER ERROR] ESP32 packet rejected: {exc}")
         return {"status": "rejected"}, 400
+
+    if not server_engine.accept_nonce("device-psk", packet.get("nonce", "")):
+        log("ERROR", "[SERVER] REPLAY BLOCKED: this ESP32 packet was already accepted.")
+        return {"status": "replay"}, 409
     process_telemetry(data, "ESP32 node", packet)
     return {"status": "accepted", "threshold": server_engine.temp_threshold}
 
@@ -236,6 +259,9 @@ def handle_sensor_telemetry(packet):
     session_key = server_engine.sensor_keys.get(request.sid)
     if session_key is None:
         log("ERROR", "[SERVER] Telemetry from a node with no ML-KEM session. Dropped.")
+        return
+    if not server_engine.accept_nonce(request.sid, packet.get("nonce", "")):
+        log("ERROR", "[SERVER] REPLAY BLOCKED: this telemetry packet was already accepted.")
         return
     try:
         data = server_engine.decrypt_sensor_data(session_key, packet)
