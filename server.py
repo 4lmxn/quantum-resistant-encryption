@@ -8,7 +8,15 @@ from flask_socketio import SocketIO, emit
 
 import attacks
 from config import DEVICE_PSK, SERVER_HOST, SERVER_PORT, TEMP_THRESHOLD
-from pqc import LINK_ACTUATOR, LINK_SENSOR, decapsulate, generate_keypair
+from pqc import (
+    ENCAPSULATION_KEY_BYTES,
+    KEM_CIPHERTEXT_BYTES,
+    LINK_ACTUATOR,
+    LINK_SENSOR,
+    decapsulate,
+    generate_keypair,
+    key_fingerprint,
+)
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "quantum_safe_secret_key")
@@ -23,24 +31,41 @@ class CentralServer:
         self.pending_handshakes = {}  # sid -> (role, decapsulation_key)
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
+        self.sessions = {}  # sid -> display record for the dashboard panel
 
     def begin_handshake(self, sid, role):
         encapsulation_key, decapsulation_key = generate_keypair()
         self.pending_handshakes[sid] = (role, decapsulation_key)
         return encapsulation_key
 
-    def complete_handshake(self, sid, kem_ciphertext):
+    def complete_handshake(self, sid, kem_ciphertext, node_fingerprint):
         role, decapsulation_key = self.pending_handshakes.pop(sid)
         label = LINK_SENSOR if role == "sensor" else LINK_ACTUATOR
         session_key = decapsulate(decapsulation_key, kem_ciphertext, label)
         store = self.sensor_keys if role == "sensor" else self.actuator_keys
         store[sid] = session_key
+
+        # The fingerprints are one-way hashes, so showing them proves both sides
+        # reached the same key without putting any key material on the wire.
+        server_fingerprint = key_fingerprint(session_key)
+        self.sessions[sid] = {
+            "node": f"{role}@{sid[:6]}",
+            "role": role,
+            "kem": "ML-KEM-768",
+            "public_key_bytes": ENCAPSULATION_KEY_BYTES,
+            "ciphertext_bytes": KEM_CIPHERTEXT_BYTES,
+            "aes_key_bits": len(session_key) * 8,
+            "server_fingerprint": server_fingerprint,
+            "node_fingerprint": node_fingerprint,
+            "agreed": node_fingerprint == server_fingerprint,
+        }
         return role
 
     def forget(self, sid):
         self.pending_handshakes.pop(sid, None)
         self.sensor_keys.pop(sid, None)
         self.actuator_keys.pop(sid, None)
+        self.sessions.pop(sid, None)
 
     def decrypt_sensor_data(self, session_key, packet):
         """Decrypts sensor payload with the negotiated sensor session key."""
@@ -65,6 +90,11 @@ server_engine = CentralServer()
 
 def log(log_type, msg):
     socketio.emit("security_log", {"type": log_type, "msg": msg})
+
+
+def broadcast_pqc_status():
+    """Pushes the live handshake table to the dashboard."""
+    socketio.emit("pqc_status", {"sessions": list(server_engine.sessions.values())})
 
 
 def process_telemetry(data, source):
@@ -155,7 +185,9 @@ def handle_pqc_encapsulation(data):
         return
     try:
         role = server_engine.complete_handshake(
-            request.sid, bytes.fromhex(data.get("kem_ciphertext", ""))
+            request.sid,
+            bytes.fromhex(data.get("kem_ciphertext", "")),
+            str(data.get("key_fingerprint", "")),
         )
     except Exception as exc:
         # Report the failure class only. The raw exception can carry the session
@@ -163,7 +195,13 @@ def handle_pqc_encapsulation(data):
         server_engine.forget(request.sid)
         log("ERROR", f"[PQC] Handshake failed ({type(exc).__name__}).")
         return
-    log("SUCCESS", f"[PQC] {role.upper()} session key established via ML-KEM-768 + HKDF-SHA256.")
+    record = server_engine.sessions[request.sid]
+    if record["agreed"]:
+        log("SUCCESS", f"[PQC] {role.upper()} session key established via ML-KEM-768 + HKDF-SHA256.")
+        log("SUCCESS", f"[PQC] Both sides derived key {record['server_fingerprint']} independently.")
+    else:
+        log("ERROR", f"[PQC] {role.upper()} key disagreement. Node and server derived different keys.")
+    broadcast_pqc_status()
     emit("pqc_established", {"role": role})
 
 
@@ -238,9 +276,18 @@ def handle_set_threshold(data):
     log("ALERT", f"[SERVER] Threshold set to {server_engine.temp_threshold}°C by operator.")
 
 
+@socketio.on("dashboard_ready")
+def handle_dashboard_ready():
+    """A dashboard that connects mid-run still needs the current table."""
+    broadcast_pqc_status()
+
+
 @socketio.on("disconnect")
 def handle_disconnect(reason=None):
+    had_session = request.sid in server_engine.sessions
     server_engine.forget(request.sid)
+    if had_session:
+        broadcast_pqc_status()
 
 
 if __name__ == "__main__":

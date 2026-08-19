@@ -9,6 +9,8 @@ recording the whole handshake still cannot recover the session key without the
 server's decapsulation key.
 """
 
+import hashlib
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from kyber_py.ml_kem import ML_KEM_768
@@ -44,3 +46,12 @@ def _derive_aes_key(shared_secret, link_label):
     return HKDF(
         algorithm=hashes.SHA256(), length=32, salt=None, info=link_label
     ).derive(shared_secret)
+
+
+def key_fingerprint(aes_key):
+    """A short public digest of a session key.
+
+    Safe to display and to send over the wire: it is a one-way hash, so it
+    proves two parties derived the same key without revealing any of it.
+    """
+    return hashlib.sha256(aes_key).hexdigest()[:16]

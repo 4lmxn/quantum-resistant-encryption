@@ -98,6 +98,40 @@
             </div>
         </div>
 
+        <!-- Post-Quantum Handshake Panel -->
+        <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg mb-6">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-md font-semibold text-gray-300">
+                    🔐 Post-Quantum Key Establishment
+                    <span class="text-xs text-gray-500 font-normal ml-2">(ML-KEM-768 · NIST FIPS 203)</span>
+                </h3>
+                <span id="pqc-count" class="text-xs text-gray-400">0 active sessions</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs font-mono">
+                    <thead class="text-gray-500 border-b border-gray-700">
+                        <tr>
+                            <th class="text-left py-2 px-2">Node</th>
+                            <th class="text-left py-2 px-2">KEM</th>
+                            <th class="text-right py-2 px-2">Public Key</th>
+                            <th class="text-right py-2 px-2">KEM Ciphertext</th>
+                            <th class="text-right py-2 px-2">AES Key</th>
+                            <th class="text-left py-2 px-2">Node Derived</th>
+                            <th class="text-left py-2 px-2">Server Derived</th>
+                            <th class="text-center py-2 px-2">Agreed</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pqc-table">
+                        <tr><td colspan="8" class="text-gray-600 py-3 px-2">No handshakes yet. Start sensor.py or actuator.py.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-xs text-gray-500 mt-3">
+                Keys are never transmitted. Each side derives its own from the ML-KEM shared secret;
+                the matching fingerprints are SHA-256 digests proving they agree.
+            </p>
+        </div>
+
         <!-- Live Chart & Security Terminal -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Telemetry Chart -->
@@ -142,6 +176,7 @@
             badge.className = "bg-green-900 text-green-300 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-2 border border-green-700";
             dot.className = "w-2 h-2 rounded-full bg-green-400 animate-ping";
             text.innerText = "WebSockets Active";
+            socket.emit('dashboard_ready');
         });
 
         socket.on('disconnect', () => {
@@ -203,6 +238,32 @@
 
         socket.on('security_log', (log) => {
             appendLog(log.type, log.msg);
+        });
+
+        socket.on('pqc_status', (data) => {
+            const table = document.getElementById('pqc-table');
+            const sessions = data.sessions || [];
+            document.getElementById('pqc-count').innerText =
+                `${sessions.length} active session${sessions.length === 1 ? '' : 's'}`;
+
+            if (sessions.length === 0) {
+                table.innerHTML = '<tr><td colspan="8" class="text-gray-600 py-3 px-2">No handshakes yet. Start sensor.py or actuator.py.</td></tr>';
+                return;
+            }
+
+            table.innerHTML = sessions.map(s => `
+                <tr class="border-b border-gray-800/50">
+                    <td class="py-2 px-2 text-indigo-300">${s.node}</td>
+                    <td class="py-2 px-2 text-gray-400">${s.kem}</td>
+                    <td class="py-2 px-2 text-right text-gray-300">${s.public_key_bytes} B</td>
+                    <td class="py-2 px-2 text-right text-gray-300">${s.ciphertext_bytes} B</td>
+                    <td class="py-2 px-2 text-right text-gray-300">${s.aes_key_bits}-bit</td>
+                    <td class="py-2 px-2 text-purple-300">${s.node_fingerprint}</td>
+                    <td class="py-2 px-2 text-purple-300">${s.server_fingerprint}</td>
+                    <td class="py-2 px-2 text-center ${s.agreed ? 'text-green-400' : 'text-red-500 font-bold'}">
+                        ${s.agreed ? '✓ MATCH' : '✗ MISMATCH'}
+                    </td>
+                </tr>`).join('');
         });
 
         // --- Interactive Helper Functions ---

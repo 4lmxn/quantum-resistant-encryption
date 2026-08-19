@@ -126,6 +126,7 @@ pre-shared key in the system.
 | `sensor.py` / `actuator.py` | Simulated nodes |
 | `attacks.py` | Attack stages, shared by the CLI and the dashboard buttons |
 | `attack.py` | CLI runner for the attack sequence |
+| `device_sim.py` | ESP32 stand-in — the constrained leg without hardware |
 | `config.py` | Threshold, network config, ESP32 pre-shared key |
 | `templates/index.html` | Dashboard |
 | `wokwi/` | ESP32 firmware and wiring |

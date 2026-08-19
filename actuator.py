@@ -4,7 +4,7 @@ import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from config import SERVER_URL
-from pqc import LINK_ACTUATOR, encapsulate
+from pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
 
@@ -63,7 +63,15 @@ def on_connect():
 @sio.on("pqc_public_key")
 def on_public_key(data):
     kem_ciphertext = actuator.establish_session(bytes.fromhex(data["encapsulation_key"]))
-    sio.emit("pqc_encapsulation", {"kem_ciphertext": kem_ciphertext.hex()})
+    # A hash of our derived key, so the server can prove agreement on the
+    # dashboard without either side transmitting key material.
+    sio.emit(
+        "pqc_encapsulation",
+        {
+            "kem_ciphertext": kem_ciphertext.hex(),
+            "key_fingerprint": key_fingerprint(bytes(actuator.key_b)),
+        },
+    )
 
 
 @sio.on("pqc_established")

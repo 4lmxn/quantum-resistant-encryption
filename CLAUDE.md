@@ -91,6 +91,18 @@ captured traffic recovers nothing. It does not pretend to run BKZ. Stage 3 sends
 a forged packet through the server's `mitm_inject` handler and lets the GCM tag
 reject it.
 
+## Showing the handshake
+
+The dashboard's **Post-Quantum Key Establishment** table is fed by `pqc_status`,
+which the server broadcasts on every handshake and disconnect. Nodes send a
+`key_fingerprint` (SHA-256 of their derived key, truncated) alongside the KEM
+ciphertext; the server compares it with its own and shows both. Fingerprints are
+one-way, so this proves agreement without putting key material on the wire —
+never replace them with the key itself.
+
+`device_sim.py` is the ESP32 stand-in and shares the wire format with
+`wokwi/sketch.ino`. Changing one means changing the other.
+
 ## The ESP32 leg
 
 `wokwi/` holds firmware, wiring and instructions. The board does a real DHT22

@@ -6,7 +6,7 @@ import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from config import SERVER_URL
-from pqc import LINK_SENSOR, encapsulate
+from pqc import LINK_SENSOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
 
@@ -69,7 +69,15 @@ def on_connect():
 @sio.on("pqc_public_key")
 def on_public_key(data):
     kem_ciphertext = sensor.establish_session(bytes.fromhex(data["encapsulation_key"]))
-    sio.emit("pqc_encapsulation", {"kem_ciphertext": kem_ciphertext.hex()})
+    # A hash of our derived key, so the server can prove agreement on the
+    # dashboard without either side transmitting key material.
+    sio.emit(
+        "pqc_encapsulation",
+        {
+            "kem_ciphertext": kem_ciphertext.hex(),
+            "key_fingerprint": key_fingerprint(bytes(sensor.key_a)),
+        },
+    )
     print("[SENSOR NODE] Encapsulated shared secret, sent KEM ciphertext to server.")
 
 
