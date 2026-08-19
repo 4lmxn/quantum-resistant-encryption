@@ -98,10 +98,24 @@ static void setRelay(bool on) {
 
 void setup() {
   Serial.begin(115200);
+  // The serial monitor attaches after boot, so output in the first moments is
+  // routinely lost. Without this pause a working sketch can look completely dead.
+  delay(2000);
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println("[BOOT] Quantum-Resistant IoT sensor node");
+  Serial.printf("[BOOT] Target: %s\n", TELEMETRY_URL);
+  Serial.println("========================================");
+
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(FAN_LED_PIN, OUTPUT);
   setRelay(false);
   dht.setup(DHT_PIN, DHTesp::DHT22);
+
+  if (strstr(TELEMETRY_URL, "/telemetry") == NULL) {
+    Serial.println("[BOOT] WARNING: TELEMETRY_URL has no /telemetry path.");
+    Serial.println("[BOOT]          Every POST will fail with HTTP 405.");
+  }
 
   Serial.print("[NODE] Connecting to WiFi");
   WiFi.begin(WIFI_SSID, WIFI_PASS, 6);
@@ -160,7 +174,8 @@ void loop() {
       setRelay(reading.temperature > response.substring(idx + 12).toFloat());
     }
   } else {
-    Serial.printf("[NODE] POST failed, HTTP %d\n", status);
+    Serial.printf("[NODE] POST failed, HTTP %d (%s)\n", status,
+                  http.errorToString(status).c_str());
   }
   http.end();
 
