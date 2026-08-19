@@ -3,12 +3,14 @@ PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
-        firmware firmware-setup sensor-legacy
+        firmware firmware-setup sensor-legacy enroll bench
 
 help:
 	@echo "Setup:"
 	@echo "  make install        install dependencies"
 	@echo "  make certs          generate TLS certificates (once, for MQTT)"
+	@echo "  make enroll         create ML-DSA device identities (once)"
+	@echo "  make bench          measure post-quantum primitive costs"
 	@echo ""
 	@echo "Run the demo (one per terminal):"
 	@echo "  make server         central server + dashboard on :5001"
@@ -26,6 +28,12 @@ help:
 
 install:
 	$(PY) -m pip install -r requirements.txt
+
+enroll:             ## create server + device ML-DSA identities (once)
+	$(PY) -m app.enroll
+
+bench:              ## measure what the post-quantum primitives cost
+	$(PY) bench.py
 
 certs:
 	./scripts/make_certs.sh
@@ -63,6 +71,7 @@ actuator-mqtt:
 test:
 	$(PY) -m tests.test_pqc
 	$(PY) -m tests.test_thermostat
+	$(PY) -m tests.test_identity
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:

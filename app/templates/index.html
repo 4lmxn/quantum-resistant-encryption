@@ -253,8 +253,8 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
           <table>
             <thead><tr><th scope="col">Node</th><th scope="col">Key exchange</th>
               <th scope="col" class="num">ek</th><th scope="col" class="num">ct</th>
-              <th scope="col">Node key</th><th scope="col">Server key</th><th scope="col">Match</th></tr></thead>
-            <tbody id="sessions"><tr><td colspan="7" style="color:var(--faint)">No nodes connected</td></tr></tbody>
+              <th scope="col">Node key</th><th scope="col">Server key</th><th scope="col">Match</th><th scope="col">Device auth</th></tr></thead>
+            <tbody id="sessions"><tr><td colspan="8" style="color:var(--faint)">No nodes connected</td></tr></tbody>
           </table>
           <p class="fine" style="margin-top:.7em;white-space:normal">Independent ML-KEM-768 exchange per link.
             Key material is never transmitted; fingerprints are SHA-256 digests proving both parties
@@ -269,15 +269,45 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
         </div>
 
         <div id="pane-3" role="tabpanel" aria-labelledby="tab-3" tabindex="0" hidden>
-          <div class="gap"><b>No device authentication</b><span>Role is asserted, not proven. A client
-            claiming to be the actuator completes a handshake and decrypts commands. Mitigation: ML-DSA
-            device signatures.</span></div>
-          <div class="gap"><b>Unauthenticated key exchange</b><span>Resists passive interception, not an
-            adversary present from the first packet. Mitigation: signed handshakes.</span></div>
-          <div class="gap"><b>No dashboard access control</b><span>Any client reaching this interface can
-            alter the threshold and actuate the relay. Isolated lab networks only.</span></div>
-          <p class="fine" style="white-space:normal">Replay was on this list until tested for. Captured
-            packets are now accepted exactly once per session key; duplicates rejected with HTTP 409.</p>
+          <p class="fine" style="white-space:normal;margin-bottom:.7em">
+            <b style="color:var(--ok)">Closed on this branch.</b> Device identity and
+            handshake authentication now use ML-DSA-65 (FIPS 204). A node verifies the
+            server's signature over the encapsulation key before continuing, and the
+            server refuses any handshake it cannot attribute to an enrolled device.
+            Signatures are bound to the role and to both halves of the exchange, so one
+            cannot be replayed into another session.</p>
+
+          <div class="gap"><b>Long-term signing keys have no forward secrecy</b>
+            <span>Session keys rotate per connection, but the ML-DSA identity keys do not.
+            An attacker who extracts a device's signing key can impersonate it until it is
+            re-enrolled. Mitigation is key rotation and revocation, which this system has
+            no mechanism for.</span></div>
+
+          <div class="gap"><b>Single-family cryptographic risk</b>
+            <span>ML-KEM and ML-DSA both rest on structured lattices. A break in that
+            family would take out key exchange and authentication together. NIST selected
+            HQC in March 2025 as a backup KEM on different (code-based) mathematics for
+            precisely this reason; a hybrid ML-KEM + HQC construction would remove the
+            single point of failure.</span></div>
+
+          <div class="gap"><b>No side-channel resistance</b>
+            <span>These are reference implementations in pure Python. Constant-time
+            behaviour is not guaranteed, and lattice schemes are known to be sensitive to
+            timing and power analysis on embedded targets. Production deployment needs a
+            hardened implementation such as liboqs or pqm4.</span></div>
+
+          <div class="gap"><b>Energy cost is unmeasured on real hardware</b>
+            <span>Timings here are from a laptop. Post-quantum key generation is
+            materially more expensive than ECDH on battery-powered nodes, and published
+            work on embedded energy profiling suggests this dominates the security budget
+            for duty-cycled sensors. Our figures do not capture it.</span></div>
+
+          <div class="gap"><b>No dashboard access control</b>
+            <span>Any client reaching this interface can alter the threshold and actuate
+            the relay. Acceptable on an isolated lab network only.</span></div>
+
+          <p class="fine" style="white-space:normal">Replay was on this list until tested
+            for. Captured packets are now accepted exactly once per session key.</p>
         </div>
       </div>
     </section>
@@ -433,8 +463,9 @@ socket.on('pqc_status', d => {
     <tr><td class="k">${s.node}</td><td>${s.transport === 'mqtt' ? 'MQTT/TLS 1.3' : 'WebSocket'}</td>
       <td class="num">${s.public_key_bytes}</td><td class="num">${s.ciphertext_bytes}</td>
       <td class="k">${s.node_fingerprint}</td><td class="k">${s.server_fingerprint}</td>
-      <td class="${s.agreed ? 'ok':'no'}">${s.agreed ? 'YES':'NO'}</td></tr>`).join('')
-    : '<tr><td colspan="7" style="color:var(--faint)">No nodes connected</td></tr>';
+      <td class="${s.agreed ? 'ok':'no'}">${s.agreed ? 'YES':'NO'}</td>
+      <td class="${s.authenticated ? 'ok':'no'}">${s.authenticated ? 'ML-DSA-65':'NONE'}</td></tr>`).join('')
+    : '<tr><td colspan="8" style="color:var(--faint)">No nodes connected</td></tr>';
   const sensor = rows.find(s => s.role === 'sensor');
   $('fp-sensor').textContent = sensor
     ? 'ML-KEM-768 · session key ' + sensor.server_fingerprint : 'Key exchange pending';

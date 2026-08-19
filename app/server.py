@@ -8,7 +8,7 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
 from app.attacks import attacks
-from app import legacy
+from app import identity, legacy
 from app.config import DEVICE_PSK, SERVER_HOST, SERVER_PORT, TEMP_THRESHOLD
 from app.pqc import (
     ENCAPSULATION_KEY_BYTES,
@@ -41,6 +41,7 @@ class CentralServer:
         # What a passive interceptor would hold for the legacy RSA channel:
         # the public key, the wrapped session key, and one captured packet.
         self.legacy_intercept = None
+        self.offered_keys = {}  # sid -> the encapsulation key we sent, for the transcript
         self.pending_handshakes = {}  # sid -> (role, decapsulation_key)
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
@@ -54,6 +55,7 @@ class CentralServer:
     def begin_handshake(self, sid, role):
         encapsulation_key, decapsulation_key = generate_keypair()
         self.pending_handshakes[sid] = (role, decapsulation_key)
+        self.offered_keys[sid] = encapsulation_key
         return encapsulation_key
 
     def complete_handshake(self, sid, kem_ciphertext, node_fingerprint, transport="socketio"):
@@ -78,6 +80,7 @@ class CentralServer:
             "node_fingerprint": node_fingerprint,
             "agreed": node_fingerprint == server_fingerprint,
             "transport": transport,
+            "authenticated": AUTHENTICATED,
         }
         return role
 
@@ -100,6 +103,7 @@ class CentralServer:
         self.sensor_keys.pop(sid, None)
         self.actuator_keys.pop(sid, None)
         self.sessions.pop(sid, None)
+        self.offered_keys.pop(sid, None)
 
     def decrypt_sensor_data(self, session_key, packet):
         """Decrypts sensor payload with the negotiated sensor session key."""
@@ -120,6 +124,11 @@ class CentralServer:
 
 
 server_engine = CentralServer()
+
+# Device identities. Absent, the server runs unauthenticated and says so, so the
+# difference between the two modes can be demonstrated in one session.
+registry = identity.IdentityRegistry()
+AUTHENTICATED = registry.server_public is not None
 mqtt_bridge = None  # set by --mqtt at startup
 
 
@@ -328,8 +337,17 @@ def handle_pqc_hello(data):
         log("ERROR", f"[PQC] Refused handshake for unknown role {role!r}.")
         return
     encapsulation_key = server_engine.begin_handshake(request.sid, role)
-    log("ATTACK", f"[PQC] {role.upper()} handshake started. Sending ML-KEM-768 public key...")
-    emit("pqc_public_key", {"encapsulation_key": encapsulation_key.hex()})
+
+    payload = {"encapsulation_key": encapsulation_key.hex(), "authenticated": AUTHENTICATED}
+    if AUTHENTICATED:
+        # Signing the offer is what stops an attacker substituting their own
+        # encapsulation key and sitting in the middle of the exchange.
+        transcript = identity.handshake_transcript(role, encapsulation_key)
+        payload["server_signature"] = identity.sign(registry.server_secret, transcript).hex()
+        log("SUCCESS", f"[PQC] {role.upper()} offer signed with ML-DSA-65 (FIPS 204).")
+    else:
+        log("ALERT", f"[PQC] {role.upper()} handshake is UNAUTHENTICATED — run: make enroll")
+    emit("pqc_public_key", payload)
 
 
 @socketio.on("pqc_encapsulation")
@@ -337,10 +355,28 @@ def handle_pqc_encapsulation(data):
     if request.sid not in server_engine.pending_handshakes:
         log("ERROR", "[PQC] Encapsulation received with no handshake in progress.")
         return
+    role_pending = server_engine.pending_handshakes[request.sid][0]
+    kem_ciphertext = bytes.fromhex(data.get("kem_ciphertext", ""))
+
+    if AUTHENTICATED:
+        device_id = str(data.get("device_id", ""))
+        signature = bytes.fromhex(data.get("device_signature", "") or "")
+        if not registry.is_enrolled(device_id):
+            server_engine.forget(request.sid)
+            log("ERROR", f"[PQC] Handshake refused: {device_id or '<none>'} is not enrolled.")
+            return
+        # The transcript binds the exact encapsulation key the server offered.
+        expected = identity.handshake_transcript(
+            role_pending, server_engine.offered_keys.get(request.sid, b""), kem_ciphertext)
+        if not identity.verify(registry.public_key_of(device_id), expected, signature):
+            server_engine.forget(request.sid)
+            log("ERROR", f"[PQC] Handshake refused: bad ML-DSA signature from {device_id}.")
+            return
+
     try:
         role = server_engine.complete_handshake(
             request.sid,
-            bytes.fromhex(data.get("kem_ciphertext", "")),
+            kem_ciphertext,
             str(data.get("key_fingerprint", "")),
         )
     except Exception as exc:

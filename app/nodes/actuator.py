@@ -6,10 +6,21 @@ import time
 import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from app import identity
 from app.config import SERVER_URL, TOPIC_COMMAND, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY
 from app.pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
+
+# Device credentials, provisioned out of band by `make enroll`. Without them the
+# node cannot prove who it is and the server will refuse the handshake.
+DEVICE_ID = os.environ.get("DEVICE_ID", "actuator-01")
+_key_dir = identity.REGISTRY_PATH.parent / "identities"
+DEVICE_SECRET = (_key_dir / f"{DEVICE_ID}.key").read_bytes() if (
+    _key_dir / f"{DEVICE_ID}.key").exists() else None
+SERVER_PUBLIC = (_key_dir / "server.pub").read_bytes() if (
+    _key_dir / "server.pub").exists() else None
+
 
 
 class SimulatedActuatorNode:
@@ -65,7 +76,24 @@ def on_connect():
 
 @sio.on("pqc_public_key")
 def on_public_key(data):
-    kem_ciphertext = actuator.establish_session(bytes.fromhex(data["encapsulation_key"]))
+    encapsulation_key = bytes.fromhex(data["encapsulation_key"])
+
+    if data.get("authenticated"):
+        if SERVER_PUBLIC is None:
+            print("[ACTUATOR NODE] Server is authenticated but this device has no "
+                  "server public key. Run: make enroll")
+            sio.disconnect()
+            return
+        transcript = identity.handshake_transcript("actuator", encapsulation_key)
+        if not identity.verify(SERVER_PUBLIC, transcript,
+                               bytes.fromhex(data.get("server_signature", "") or "")):
+            # An unverifiable offer is exactly what a man in the middle produces.
+            print("[ACTUATOR NODE] ABORT: server signature invalid — refusing to continue.")
+            sio.disconnect()
+            return
+        print("[ACTUATOR NODE] Server identity verified (ML-DSA-65).")
+
+    kem_ciphertext = actuator.establish_session(encapsulation_key)
     # A hash of our derived key, so the server can prove agreement on the
     # dashboard without either side transmitting key material.
     sio.emit(
@@ -73,6 +101,11 @@ def on_public_key(data):
         {
             "kem_ciphertext": kem_ciphertext.hex(),
             "key_fingerprint": key_fingerprint(bytes(actuator.key_b)),
+            "device_id": DEVICE_ID,
+            "device_signature": identity.sign(
+                DEVICE_SECRET,
+                identity.handshake_transcript("actuator", encapsulation_key, kem_ciphertext),
+            ).hex() if DEVICE_SECRET else "",
         },
     )
 

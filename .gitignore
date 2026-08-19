@@ -4,3 +4,5 @@ __pycache__/
 .DS_Store
 PR_BODY.md
 certs/
+identities.json
+identities/
