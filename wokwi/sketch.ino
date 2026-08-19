@@ -7,12 +7,15 @@
  *
  * The ML-KEM-768 handshake runs on the Python nodes, not here: this board uses
  * its provisioned key (DEVICE_PSK in config.py). Both must match exactly.
+ *
+ * NO EXTERNAL LIBRARIES. The DHT22 is read with its raw single-wire protocol
+ * and every other include ships with the ESP32 Arduino core, so there is no
+ * libraries.txt to resolve and nothing to install.
  */
 
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <DHTesp.h>
 #include "mbedtls/gcm.h"
 
 // Wokwi's built-in network. Open password, channel 6 — connects in ~1s.
@@ -40,7 +43,67 @@ static const int FAN_LED_PIN = 27;
 static const size_t NONCE_LEN = 12;  // 96-bit GCM nonce
 static const size_t TAG_LEN = 16;
 
-DHTesp dht;
+// ---------------------------------------------------------------- DHT22 ----
+
+/* Blocks until the pin reads `level`, or gives up. Returns false on timeout,
+   which is how a missing or miswired sensor surfaces instead of hanging. */
+static bool waitForLevel(int level, uint32_t timeoutUs) {
+  uint32_t started = micros();
+  while (digitalRead(DHT_PIN) != level) {
+    if (micros() - started > timeoutUs) return false;
+  }
+  return true;
+}
+
+/*
+ * DHT22 single-wire protocol, one exchange:
+ *   host  : pull low >=1ms, release
+ *   sensor: 80us low, 80us high
+ *   sensor: 40 bits, each a 50us low then a high whose WIDTH is the bit
+ *           (~26us = 0, ~70us = 1)
+ *   bytes : humidity high/low, temperature high/low, checksum
+ */
+static bool readDht22Once(float *temperature, float *humidity) {
+  uint8_t data[5] = {0, 0, 0, 0, 0};
+
+  pinMode(DHT_PIN, OUTPUT);
+  digitalWrite(DHT_PIN, LOW);
+  delay(2);
+  digitalWrite(DHT_PIN, HIGH);
+  delayMicroseconds(30);
+  pinMode(DHT_PIN, INPUT_PULLUP);
+
+  if (!waitForLevel(LOW, 200)) return false;   // sensor acknowledges
+  if (!waitForLevel(HIGH, 200)) return false;  // 80us low ends
+  if (!waitForLevel(LOW, 200)) return false;   // 80us high ends
+
+  for (int i = 0; i < 40; i++) {
+    if (!waitForLevel(HIGH, 200)) return false;  // the 50us low ends
+    uint32_t started = micros();
+    if (!waitForLevel(LOW, 200)) return false;   // measure the high pulse
+    if (micros() - started > 45) data[i / 8] |= (0x80 >> (i % 8));
+  }
+
+  if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) return false;
+
+  *humidity = (((uint16_t)data[0] << 8) | data[1]) / 10.0f;
+  *temperature = ((((uint16_t)data[2] & 0x7F) << 8) | data[3]) / 10.0f;
+  if (data[2] & 0x80) *temperature = -*temperature;  // sign lives in bit 7
+  return true;
+}
+
+/* Interrupts are left enabled so WiFi keeps working, which means a bit can
+   occasionally be mistimed. Retrying is cheaper and safer than a long
+   interrupt-off critical section on a radio-carrying chip. */
+static bool readDht22(float *temperature, float *humidity) {
+  for (int attempt = 0; attempt < 5; attempt++) {
+    if (readDht22Once(temperature, humidity)) return true;
+    delay(50);
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------- crypto ---
 
 static void toHex(const uint8_t *bytes, size_t len, char *out) {
   static const char *digits = "0123456789abcdef";
@@ -91,6 +154,8 @@ static bool sealPayload(const char *plaintext, char *nonceHex, char *cipherHex) 
   return true;
 }
 
+// ------------------------------------------------------------------ main ---
+
 static void setRelay(bool on) {
   digitalWrite(RELAY_PIN, on ? HIGH : LOW);
   digitalWrite(FAN_LED_PIN, on ? HIGH : LOW);
@@ -110,7 +175,7 @@ void setup() {
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(FAN_LED_PIN, OUTPUT);
   setRelay(false);
-  dht.setup(DHT_PIN, DHTesp::DHT22);
+  pinMode(DHT_PIN, INPUT_PULLUP);
 
   if (strstr(TELEMETRY_URL, "/telemetry") == NULL) {
     Serial.println("[BOOT] WARNING: TELEMETRY_URL has no /telemetry path.");
@@ -127,19 +192,20 @@ void setup() {
 }
 
 void loop() {
-  TempAndHumidity reading = dht.getTempAndHumidity();
-  if (dht.getStatus() != DHTesp::ERROR_NONE) {
-    Serial.printf("[SENSOR] DHT22 error: %s\n", dht.getStatusString());
+  float temperature = 0.0f;
+  float humidity = 0.0f;
+  if (!readDht22(&temperature, &humidity)) {
+    Serial.println("[SENSOR] DHT22 read failed (check wiring on GPIO 15).");
     delay(2000);
     return;
   }
 
   char plaintext[96];
   snprintf(plaintext, sizeof(plaintext), "{\"temperature\": %.2f, \"humidity\": %.2f}",
-           reading.temperature, reading.humidity);
+           temperature, humidity);
 
   char nonceHex[NONCE_LEN * 2 + 1];
-  char cipherHex[(192) * 2 + 1];
+  char cipherHex[192 * 2 + 1];
   if (!sealPayload(plaintext, nonceHex, cipherHex)) {
     delay(4000);
     return;
@@ -164,14 +230,14 @@ void loop() {
   int status = http.POST((uint8_t *)body, strlen(body));
 
   if (status == 200) {
-    Serial.printf("[NODE] Sealed %.2fC / %.2f%% -> server accepted\n",
-                  reading.temperature, reading.humidity);
+    Serial.printf("[NODE] Sealed %.2fC / %.2f%% -> server accepted\n", temperature,
+                  humidity);
     // The server owns the threshold decision; the node just mirrors it locally
     // so the relay reacts even before the actuator node is told.
     String response = http.getString();
     int idx = response.indexOf("\"threshold\":");
     if (idx >= 0) {
-      setRelay(reading.temperature > response.substring(idx + 12).toFloat());
+      setRelay(temperature > response.substring(idx + 12).toFloat());
     }
   } else {
     Serial.printf("[NODE] POST failed, HTTP %d (%s)\n", status,

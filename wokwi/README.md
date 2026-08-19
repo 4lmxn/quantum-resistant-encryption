@@ -50,12 +50,16 @@ It prints a URL like `https://random-words-here.trycloudflare.com`. Keep this
 terminal open — closing it kills the tunnel and the URL changes each run.
 
 **3. Create the Wokwi project.** Go to [wokwi.com](https://wokwi.com) → New Project
-→ ESP32. You get `sketch.ino` and `diagram.json` tabs.
+→ **ESP32 (Arduino / C++)**. Check the tab bar shows `sketch.ino` and NOT
+`main.py` — a `main.py` tab means you picked the MicroPython template, which
+ignores `sketch.ino` entirely and will simply never run your code.
 
 **4. Paste the files:**
 - `sketch.ino` → the sketch tab
 - `diagram.json` → the diagram tab (click the tab, paste over everything)
-- Add a `libraries.txt` tab (the **+** next to the tabs) and paste `libraries.txt`
+
+There is no `libraries.txt` and nothing to install. The DHT22 is read with its
+raw single-wire protocol and every include ships with the ESP32 Arduino core.
 
 **5. Set your URL.** In `sketch.ino`, edit `TELEMETRY_URL` to your tunnel address,
 keeping the `/telemetry` path:
@@ -115,7 +119,7 @@ Flash from Arduino IDE (board: **ESP32 Dev Module**) or PlatformIO.
 | `POST failed, HTTP -1` | Tunnel died, or wrong URL. Re-check the cloudflared output. |
 | `POST failed, HTTP 400` | Server rejected the packet — `DEVICE_PSK` mismatch between `config.py` and `sketch.ino`. |
 | `DHT22 error: TIMEOUT` | Wrong pin, or the DHT22 is not wired in the diagram. |
-| Compile error on `DHTesp` | `libraries.txt` tab missing or misnamed. |
+| `DHT22 read failed` | Sensor not wired to GPIO 15 in the diagram. |
 | `host.wokwi.internal` unreachable | You are on a free account — use Route A. |
 
 ## If you change the key
