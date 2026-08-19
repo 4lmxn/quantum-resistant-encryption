@@ -2,7 +2,8 @@
 PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
-        server-mqtt sensor-mqtt actuator-mqtt test clean
+        server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
+        firmware firmware-setup sensor-legacy
 
 help:
 	@echo "Setup:"
@@ -21,6 +22,7 @@ help:
 	@echo "  make broker         then server-mqtt / sensor-mqtt / actuator-mqtt"
 	@echo ""
 	@echo "  make test           run the test suite"
+	@echo "  make firmware       compile the ESP32 sketch"
 
 install:
 	$(PY) -m pip install -r requirements.txt
@@ -65,6 +67,17 @@ test:
 
 test-device:
 	$(PY) -m tests.test_device_leg
+
+firmware:           ## compile the ESP32 sketch (needs arduino-cli + esp32 core)
+	arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all firmware/sketch
+
+firmware-setup:     ## one-time toolchain install for the firmware target
+	brew install arduino-cli
+	arduino-cli config init --overwrite
+	arduino-cli config add board_manager.additional_urls \
+	  https://espressif.github.io/arduino-esp32/package_esp32_index.json
+	arduino-cli core update-index
+	arduino-cli core install esp32:esp32
 
 clean:
 	find . -path ./.venv -prune -o -name __pycache__ -type d -print0 | xargs -0 rm -rf

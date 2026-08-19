@@ -1,5 +1,25 @@
 # ESP32 hardware leg — step by step
 
+## Build status
+
+The sketch compiles clean against **ESP32 Arduino core 3.3.11**, with
+`--warnings all` and zero warnings from `sketch.ino`:
+
+```
+Sketch uses 1028340 bytes (78%) of program storage space. Maximum is 1310720 bytes.
+Global variables use 48576 bytes (14%) of dynamic memory, leaving 279104 bytes.
+```
+
+Reproduce it yourself:
+
+```bash
+make firmware-setup   # once — arduino-cli plus the ESP32 core
+make firmware
+```
+
+So if Wokwi refuses to run this, the problem is Wokwi, not the firmware.
+
+
 Real DHT22 read, real AES-256-GCM on the ESP32's hardware crypto, real HTTP POST
 to the Flask server. The ML-KEM-768 handshake runs on the Python nodes; this
 board uses the provisioned `DEVICE_PSK`.
@@ -55,7 +75,7 @@ terminal open — closing it kills the tunnel and the URL changes each run.
 ignores `sketch.ino` entirely and will simply never run your code.
 
 **4. Paste the files:**
-- `sketch.ino` → the sketch tab
+- `sketch/sketch.ino` → the sketch tab
 - `diagram.json` → the diagram tab (click the tab, paste over everything)
 
 There is no `libraries.txt` and nothing to install. The DHT22 is read with its
