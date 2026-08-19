@@ -150,12 +150,18 @@ def handle_pqc_hello(data):
 
 @socketio.on("pqc_encapsulation")
 def handle_pqc_encapsulation(data):
+    if request.sid not in server_engine.pending_handshakes:
+        log("ERROR", "[PQC] Encapsulation received with no handshake in progress.")
+        return
     try:
         role = server_engine.complete_handshake(
-            request.sid, bytes.fromhex(data["kem_ciphertext"])
+            request.sid, bytes.fromhex(data.get("kem_ciphertext", ""))
         )
     except Exception as exc:
-        log("ERROR", f"[PQC] Handshake failed: {exc}")
+        # Report the failure class only. The raw exception can carry the session
+        # id, and this log is broadcast to every connected dashboard.
+        server_engine.forget(request.sid)
+        log("ERROR", f"[PQC] Handshake failed ({type(exc).__name__}).")
         return
     log("SUCCESS", f"[PQC] {role.upper()} session key established via ML-KEM-768 + HKDF-SHA256.")
     emit("pqc_established", {"role": role})

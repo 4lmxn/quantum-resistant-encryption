@@ -46,9 +46,16 @@ class SimulatedSensorNode:
 sensor = SimulatedSensorNode()
 
 
-def stream_telemetry():
+# Bumped on every completed handshake. A reconnect can restore sio.connected
+# before the previous loop wakes from its sleep, so "am I still connected?" is
+# not enough to retire an old loop -- without this each reconnect would leave
+# another stream running forever.
+stream_generation = 0
+
+
+def stream_telemetry(generation):
     print("[SENSOR NODE] Streaming telemetry to Central Server...")
-    while sio.connected:
+    while sio.connected and generation == stream_generation:
         sio.emit("sensor_telemetry_event", sensor.read_dht22_and_encrypt())
         sio.sleep(4)  # Non-blocking Socket.IO sleep to preserve ping/pong loop
 
@@ -68,8 +75,10 @@ def on_public_key(data):
 
 @sio.on("pqc_established")
 def on_established(data):
+    global stream_generation
     print("[SENSOR NODE] Session Key A derived (ML-KEM-768 -> HKDF-SHA256).")
-    sio.start_background_task(stream_telemetry)
+    stream_generation += 1
+    sio.start_background_task(stream_telemetry, stream_generation)
 
 
 @sio.on("disconnect")

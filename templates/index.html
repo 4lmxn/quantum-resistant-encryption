@@ -106,7 +106,12 @@
                     <h3 class="text-md font-semibold text-gray-300">Real-Time Sensor Telemetry</h3>
                     <button onclick="resetChart()" class="text-xs text-gray-400 hover:text-white underline">Clear Chart</button>
                 </div>
-                <canvas id="telemetryChart" class="w-full h-64"></canvas>
+                <!-- Chart.js with maintainAspectRatio:false sizes itself from its
+                     PARENT. The height must live on this wrapper, not on the
+                     canvas, or each redraw grows the canvas without bound. -->
+                <div class="relative h-64 w-full">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
             </div>
 
             <!-- Quantum Attack & Security Terminal with Controls -->

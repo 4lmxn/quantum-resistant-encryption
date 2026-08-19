@@ -10,6 +10,8 @@ standardised form of CRYSTALS-Kyber). The data channels are **AES-256-GCM**.
 
 ![status](https://img.shields.io/badge/ML--KEM--768-FIPS%20203-blue) ![status](https://img.shields.io/badge/AES--256--GCM-authenticated-green)
 
+![Dashboard](docs/dashboard.png)
+
 ## Why this is quantum-resistant
 
 | Layer | Algorithm | Quantum threat | Status |
