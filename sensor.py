@@ -1,20 +1,27 @@
 import json
 import os
 import random
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 import socketio
-from config import SESSION_KEY_A
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-# Initialize Socket.IO Client
+from config import SERVER_URL
+from pqc import LINK_SENSOR, encapsulate
+
 sio = socketio.Client()
-
-session_key_a = bytearray(SESSION_KEY_A)
 
 
 class SimulatedSensorNode:
+    """Holds no key until the ML-KEM-768 handshake with the server completes."""
 
-    def __init__(self, key_a):
-        self.key_a = key_a
+    def __init__(self):
+        self.key_a = None
+
+    def establish_session(self, encapsulation_key):
+        """Encapsulates against the server's public key. Returns the KEM ciphertext."""
+        session_key, kem_ciphertext = encapsulate(encapsulation_key, LINK_SENSOR)
+        self.key_a = bytearray(session_key)
+        return kem_ciphertext
 
     def read_dht22_and_encrypt(self):
         """Simulates physical sensor reading and encrypts via AES-256-GCM."""
@@ -22,24 +29,47 @@ class SimulatedSensorNode:
             "temperature": round(random.uniform(26.0, 35.0), 2),
             "humidity": round(random.uniform(40.0, 65.0), 2),
         }
-
         aesgcm = AESGCM(bytes(self.key_a))
         nonce = os.urandom(12)  # 96-bit nonce
-        payload = json.dumps(telemetry).encode("utf-8")
-        ciphertext = aesgcm.encrypt(nonce, payload, None)
-
+        ciphertext = aesgcm.encrypt(nonce, json.dumps(telemetry).encode("utf-8"), None)
         return {"nonce": nonce.hex(), "ciphertext": ciphertext.hex()}
 
     def zeroize_key(self):
-        """Wipes Session Key A from memory for forward secrecy."""
+        """Wipes the negotiated session key from memory for forward secrecy."""
+        if self.key_a is None:
+            return
         for i in range(len(self.key_a)):
             self.key_a[i] = 0
         print("\n[SENSOR] Session Key A zeroized from RAM.")
 
 
+sensor = SimulatedSensorNode()
+
+
+def stream_telemetry():
+    print("[SENSOR NODE] Streaming telemetry to Central Server...")
+    while sio.connected:
+        sio.emit("sensor_telemetry_event", sensor.read_dht22_and_encrypt())
+        sio.sleep(4)  # Non-blocking Socket.IO sleep to preserve ping/pong loop
+
+
 @sio.on("connect")
 def on_connect():
-    print("[SENSOR NODE] Connected to Central Server WebSockets.")
+    print("[SENSOR NODE] Connected. Starting ML-KEM-768 handshake...")
+    sio.emit("pqc_hello", {"role": "sensor"})
+
+
+@sio.on("pqc_public_key")
+def on_public_key(data):
+    kem_ciphertext = sensor.establish_session(bytes.fromhex(data["encapsulation_key"]))
+    sio.emit("pqc_encapsulation", {"kem_ciphertext": kem_ciphertext.hex()})
+    print("[SENSOR NODE] Encapsulated shared secret, sent KEM ciphertext to server.")
+
+
+@sio.on("pqc_established")
+def on_established(data):
+    print("[SENSOR NODE] Session Key A derived (ML-KEM-768 -> HKDF-SHA256).")
+    sio.start_background_task(stream_telemetry)
 
 
 @sio.on("disconnect")
@@ -48,16 +78,12 @@ def on_disconnect():
 
 
 def run_sensor_node():
-    sensor = SimulatedSensorNode(session_key_a)
-    sio.connect("http://127.0.0.1:5000")
-
-    print("[SENSOR NODE] Streaming telemetry to Central Server...")
+    sio.connect(SERVER_URL)
     try:
-        while sio.connected:
-            packet = sensor.read_dht22_and_encrypt()
-            sio.emit("sensor_telemetry_event", packet)
-            sio.sleep(4)  # Non-blocking Socket.IO sleep to preserve ping/pong loop
+        sio.wait()
     except KeyboardInterrupt:
+        pass
+    finally:
         sensor.zeroize_key()
         sio.disconnect()
 

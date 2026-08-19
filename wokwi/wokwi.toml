@@ -1,0 +1,10 @@
+[wokwi]
+version = 1
+firmware = "sketch.ino"
+elf = "sketch.ino.elf"
+
+# Lets the simulated ESP32 reach a server on your own machine.
+# Start the Wokwi gateway first:  wokwigw
+[[net.forward]]
+from = "host.wokwi.internal:5001"
+to = "127.0.0.1:5001"

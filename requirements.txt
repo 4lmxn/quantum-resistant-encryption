@@ -1,0 +1,5 @@
+cryptography>=42
+flask>=3
+flask-socketio>=5.3
+python-socketio[client]>=5.11
+kyber-py>=1.2
