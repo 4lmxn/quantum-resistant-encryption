@@ -29,6 +29,10 @@ class CentralServer:
 
     def __init__(self):
         self.temp_threshold = TEMP_THRESHOLD
+        # A thermostat has two edges, not one. Without the lower edge the fan
+        # latches on at the first warm reading and never comes back off.
+        self.relay_hysteresis = 1.0
+        self.desired_relay = "OFF"
         self.pending_handshakes = {}  # sid -> (role, decapsulation_key)
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
@@ -121,7 +125,13 @@ def broadcast_pqc_status():
 
 
 def process_telemetry(data, source, packet=None):
-    """Shared decision logic for both the Socket.IO nodes and the ESP32 HTTP leg."""
+    """Shared decision logic for both the Socket.IO nodes and the ESP32 HTTP leg.
+
+    The relay decision runs first so the reading and the resulting state are
+    reported together; reporting first would always show the previous state.
+    """
+    decide_relay(data["temperature"])
+
     # The raw packet goes to the dashboard too, so it can show side by side what
     # an eavesdropper captures against what the key holder recovers.
     wire = {}
@@ -139,8 +149,11 @@ def process_telemetry(data, source, packet=None):
             "humidity": data["humidity"],
             "status": "SECURE_ML_KEM_768",
             "source": source,
-            # A dashboard that opens mid-run must not show a stale limit.
+            # A dashboard that opens mid-run must not show a stale limit,
+            # and must never have to infer state by parsing log messages.
             "threshold": server_engine.temp_threshold,
+            "relay": server_engine.desired_relay,
+            "too_hot": data["temperature"] > server_engine.temp_threshold,
             "wire": wire,
         },
     )
@@ -150,18 +163,33 @@ def process_telemetry(data, source, packet=None):
         f"(AES-256-GCM, key from ML-KEM-768): {data['temperature']}°C",
     )
 
-    if data["temperature"] <= server_engine.temp_threshold:
-        return
 
-    log(
-        "ALERT",
-        f"[SERVER] ALERT: Temp {data['temperature']}°C > {server_engine.temp_threshold}°C. "
-        f"Emitting FAN_ON command...",
-    )
+
+def decide_relay(temperature):
+    """Edge-triggered: only speak when the decision actually changes.
+
+    Turns on above the limit and back off a degree below it, so a reading
+    hovering on the boundary cannot make the relay chatter.
+    """
+    on_at = server_engine.temp_threshold
+    off_at = server_engine.temp_threshold - server_engine.relay_hysteresis
+
+    if temperature > on_at and server_engine.desired_relay == "OFF":
+        wanted = "ON"
+    elif temperature < off_at and server_engine.desired_relay == "ON":
+        wanted = "OFF"
+    else:
+        return  # no change, so no command and no log line
+
     if not server_engine.actuator_keys:
         log("ERROR", "[SERVER] No actuator has completed a handshake. Command dropped.")
         return
-    send_actuator_command("FAN_ON")
+
+    server_engine.desired_relay = wanted
+    edge = f"rose above {on_at}°C" if wanted == "ON" else f"fell below {off_at}°C"
+    log("ALERT", f"[SERVER] {temperature}°C {edge}. Sending sealed FAN_{wanted}.")
+    send_actuator_command(f"FAN_{wanted}")
+    socketio.emit("update_actuator_ui", {"relay": wanted})
 
 
 def send_actuator_command(command_str):
@@ -283,7 +311,12 @@ def handle_relay_log(data):
 
 @socketio.on("relay_actuator_ui")
 def handle_relay_actuator_ui(data):
-    socketio.emit("update_actuator_ui", data)
+    """The actuator confirms what it did. The server already emitted the
+    intended state, so this only corrects a genuine disagreement."""
+    if data.get("relay") != server_engine.desired_relay:
+        log("ERROR", f"[SERVER] Actuator reports {data.get('relay')}, expected "
+                     f"{server_engine.desired_relay}.")
+        socketio.emit("update_actuator_ui", data)
 
 
 @socketio.on("mitm_inject")
@@ -314,8 +347,10 @@ def handle_toggle_actuator_override():
     if not server_engine.actuator_keys:
         log("ERROR", "[SERVER] Override ignored: no actuator has completed a handshake.")
         return
-    log("ALERT", "[SERVER] Operator override: dispatching sealed FAN_TOGGLE.")
-    send_actuator_command("FAN_TOGGLE")
+    server_engine.desired_relay = "OFF" if server_engine.desired_relay == "ON" else "ON"
+    log("ALERT", f"[SERVER] Operator override: sending sealed FAN_{server_engine.desired_relay}.")
+    send_actuator_command(f"FAN_{server_engine.desired_relay}")
+    socketio.emit("update_actuator_ui", {"relay": server_engine.desired_relay})
 
 
 @socketio.on("set_threshold")

@@ -189,7 +189,7 @@ td{padding:9px 8px;border-bottom:1px solid rgba(46,56,96,.4);font-family:'IBM Pl
       <div class="role">Step 2</div>
       <div class="name">The computer</div>
       <div class="verdict" id="verdict" style="color:var(--muted)">watching</div>
-      <div class="sub">turns the fan on above <span id="limit-echo" class="mono">30.0°C</span></div>
+      <div class="sub">on above <span id="limit-echo" class="mono">30.0°C</span>, off a degree below</div>
     </div>
 
     <div class="wire" id="wire-out"><span class="packet">📦</span></div>
@@ -372,6 +372,11 @@ socket.on('update_telemetry', d => {
     $('limit-label').textContent = d.threshold.toFixed(1) + ' °C';
     $('limit-echo').textContent = d.threshold.toFixed(1) + '°C';
   }
+  if (d.too_hot !== undefined) {
+    $('verdict').textContent = d.too_hot ? 'too hot' : 'all fine';
+    $('verdict').style.color = d.too_hot ? 'var(--heat)' : 'var(--sealed)';
+  }
+  if (d.relay) setFan(d.relay);
   ride('wire-in', false);
 
   if (d.wire && d.wire.ciphertext) {
@@ -382,23 +387,18 @@ socket.on('update_telemetry', d => {
   }
 });
 
-socket.on('update_actuator_ui', d => {
-  const on = d.relay === 'ON';
+function setFan(state) {
+  const on = state === 'ON';
   $('fan').className = 'fan-state ' + (on ? 'on' : 'off');
   $('fan').innerHTML = '<span class="spin">◍</span> ' + (on ? 'ON' : 'OFF');
-});
+}
+socket.on('update_actuator_ui', d => setFan(d.relay));
 
 socket.on('security_log', l => {
   const cls = {SUCCESS:'l-ok', ERROR:'l-bad', ALERT:'l-warn', ATTACK:'l-atk'}[l.type] || 'l-ok';
-  const limit = l.msg.match(/Threshold set to ([\d.]+)/);
-  if (limit) {
-    $('limit').value = limit[1];
-    $('limit-label').textContent = parseFloat(limit[1]).toFixed(1) + ' °C';
-    $('limit-echo').textContent = parseFloat(limit[1]).toFixed(1) + '°C';
-  }
-  if (/ALERT|Emitting/.test(l.msg)) { $('verdict').textContent = 'too hot'; $('verdict').style.color = 'var(--heat)'; }
-  else if (/Decrypted telemetry/.test(l.msg)) { $('verdict').textContent = 'all fine'; $('verdict').style.color = 'var(--sealed)'; }
-  if (/FAN_ON|FAN_TOGGLE|Relay State/.test(l.msg)) ride('wire-out', false);
+  // The wire animation is the only thing that reads the log, and only to know
+  // that a command moved. Everything else comes from update_telemetry.
+  if (l.type === 'ALERT' && /Sending sealed|Operator override/.test(l.msg)) ride('wire-out', false);
   if (/REJECTED|Tampering/.test(l.msg)) ride('wire-out', true);
 
   const log = $('log');

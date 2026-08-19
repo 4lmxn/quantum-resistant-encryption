@@ -56,6 +56,7 @@ actuator-mqtt:
 
 test:
 	$(PY) -m tests.test_pqc
+	$(PY) -m tests.test_thermostat
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:
