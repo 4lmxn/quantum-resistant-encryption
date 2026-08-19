@@ -11,6 +11,7 @@ class FakeEngine:
         self.temp_threshold = threshold
         self.relay_hysteresis = hysteresis
         self.desired_relay = "OFF"
+        self.manual_mode = False
         self.actuator_keys = {"fake-actuator": b"\x00" * 32}
 
 
@@ -61,6 +62,34 @@ def test_holds_state_inside_the_hysteresis_band():
 def test_speaks_only_when_the_decision_changes():
     _, commands = run([33.0, 34.0, 35.0, 33.5])
     assert commands == ["FAN_ON"], f"re-sent commands with no change: {commands}"
+
+
+
+
+def test_manual_mode_suspends_the_thermostat():
+    """The reported bug: a manual switch was undone by the next warm reading."""
+    engine, commands = FakeEngine(), []
+    original = (server.server_engine, server.send_actuator_command, server.socketio.emit)
+    server.server_engine = engine
+    server.send_actuator_command = commands.append
+    server.socketio.emit = lambda *a, **k: None
+    server.log = lambda *a, **k: None
+    try:
+        server.decide_relay(33.0)                 # thermostat turns it on
+        assert engine.desired_relay == "ON"
+
+        engine.manual_mode = True                 # operator switches it off
+        engine.desired_relay = "OFF"
+
+        for hot in (33.0, 34.0, 35.0):            # thermostat must stay quiet
+            server.decide_relay(hot)
+        assert engine.desired_relay == "OFF", "manual choice was overridden"
+
+        engine.manual_mode = False                # back to automatic
+        server.decide_relay(33.0)
+        assert engine.desired_relay == "ON", "thermostat did not resume"
+    finally:
+        server.server_engine, server.send_actuator_command, server.socketio.emit = original
 
 
 if __name__ == "__main__":

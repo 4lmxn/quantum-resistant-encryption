@@ -33,6 +33,9 @@ class CentralServer:
         # latches on at the first warm reading and never comes back off.
         self.relay_hysteresis = 1.0
         self.desired_relay = "OFF"
+        # Manual control has to suspend the thermostat. Without this the next
+        # reading above the limit immediately undoes whatever the operator did.
+        self.manual_mode = False
         self.pending_handshakes = {}  # sid -> (role, decapsulation_key)
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
@@ -153,6 +156,7 @@ def process_telemetry(data, source, packet=None):
             # and must never have to infer state by parsing log messages.
             "threshold": server_engine.temp_threshold,
             "relay": server_engine.desired_relay,
+            "manual": server_engine.manual_mode,
             "too_hot": data["temperature"] > server_engine.temp_threshold,
             "wire": wire,
         },
@@ -171,6 +175,9 @@ def decide_relay(temperature):
     Turns on above the limit and back off a degree below it, so a reading
     hovering on the boundary cannot make the relay chatter.
     """
+    if server_engine.manual_mode:
+        return  # an operator is driving; the thermostat stays quiet
+
     on_at = server_engine.temp_threshold
     off_at = server_engine.temp_threshold - server_engine.relay_hysteresis
 
@@ -347,10 +354,19 @@ def handle_toggle_actuator_override():
     if not server_engine.actuator_keys:
         log("ERROR", "[SERVER] Override ignored: no actuator has completed a handshake.")
         return
+    server_engine.manual_mode = True
     server_engine.desired_relay = "OFF" if server_engine.desired_relay == "ON" else "ON"
-    log("ALERT", f"[SERVER] Operator override: sending sealed FAN_{server_engine.desired_relay}.")
+    log("ALERT", f"[SERVER] Manual control: sending sealed FAN_{server_engine.desired_relay}. "
+                 f"The thermostat is paused.")
     send_actuator_command(f"FAN_{server_engine.desired_relay}")
     socketio.emit("update_actuator_ui", {"relay": server_engine.desired_relay})
+
+
+@socketio.on("resume_automatic")
+def handle_resume_automatic():
+    """Hands control back to the thermostat, which re-decides on the next reading."""
+    server_engine.manual_mode = False
+    log("ALERT", "[SERVER] Back to automatic. The thermostat decides again.")
 
 
 @socketio.on("set_threshold")

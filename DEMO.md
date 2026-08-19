@@ -19,6 +19,10 @@ source .venv/bin/activate
 
 Open <http://127.0.0.1:5001> full-screen. That page is the entire demo.
 
+**Projecting it?** The page sizes itself from the viewport, so a 1920-wide
+projector gets roughly 21px body text and a 64px temperature readout with no
+zooming. If the room is large, `Cmd +` twice still works — the layout is fluid.
+
 ---
 
 ## 1. "Why this needs encrypting at all" — 30 seconds
@@ -70,7 +74,10 @@ the actuator's own key, and the relay flips to **ON**.
 > The command is encrypted and authenticated. The actuator obeys it only because
 > the GCM tag verified.
 
-Press **Manual Relay Override** to show operator control uses the same sealed path.
+Press **Switch the fan by hand**. The fan card turns amber and reads
+*manual · the thermostat is paused* — operator control uses the same sealed,
+authenticated path, and the automatic control stops fighting it. Press
+**Back to automatic** to hand control back.
 
 ---
 
