@@ -66,11 +66,12 @@ static bool waitForLevel(int level, uint32_t timeoutUs) {
 static bool readDht22Once(float *temperature, float *humidity) {
   uint8_t data[5] = {0, 0, 0, 0, 0};
 
+  // The DHT22 line is open-drain: the host may only pull it LOW or release it.
+  // Actively driving it HIGH fights the sensor when it answers and registers as
+  // a genuine short circuit, so release straight from OUTPUT LOW to input.
   pinMode(DHT_PIN, OUTPUT);
   digitalWrite(DHT_PIN, LOW);
   delay(2);
-  digitalWrite(DHT_PIN, HIGH);
-  delayMicroseconds(30);
   pinMode(DHT_PIN, INPUT_PULLUP);
 
   if (!waitForLevel(LOW, 200)) return false;   // sensor acknowledges
