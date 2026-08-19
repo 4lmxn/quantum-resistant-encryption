@@ -7,6 +7,7 @@ import time
 import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from app import legacy
 from app.config import SERVER_URL, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY, TOPIC_TELEMETRY
 from app.pqc import LINK_SENSOR, encapsulate, key_fingerprint
 
@@ -62,10 +63,32 @@ def stream_telemetry(generation):
         sio.sleep(4)  # Non-blocking Socket.IO sleep to preserve ping/pong loop
 
 
+LEGACY_MODE = False
+
+
 @sio.on("connect")
 def on_connect():
+    if LEGACY_MODE:
+        print("[SENSOR NODE] Connected. Requesting CLASSICAL RSA key transport...")
+        sio.emit("legacy_hello", {})
+        return
     print("[SENSOR NODE] Connected. Starting ML-KEM-768 handshake...")
     sio.emit("pqc_hello", {"role": "sensor"})
+
+
+@sio.on("legacy_public_key")
+def on_legacy_public_key(data):
+    """Classical key transport: the node picks the session key and encrypts it
+    under the server's RSA public key. Recovering that key recovers everything."""
+    session_key = os.urandom(32)
+    sensor.key_a = bytearray(session_key)
+    blocks, chunk = legacy.wrap_session_key(session_key, (data["n"], data["e"]))
+    sio.emit("legacy_key_transport", {
+        "blocks": blocks, "chunk": chunk,
+        "key_fingerprint": key_fingerprint(session_key),
+    })
+    print(f"[SENSOR NODE] Session key sent under RSA-{data['n'].bit_length()} "
+          f"(no post-quantum protection).")
 
 
 @sio.on("pqc_public_key")
@@ -86,7 +109,9 @@ def on_public_key(data):
 @sio.on("pqc_established")
 def on_established(data):
     global stream_generation
-    print("[SENSOR NODE] Session Key A derived (ML-KEM-768 -> HKDF-SHA256).")
+    print("[SENSOR NODE] Session Key A established via "
+          + ("classical RSA key transport." if LEGACY_MODE
+             else "ML-KEM-768 -> SHAKE-256 -> HKDF-SHA256."))
     stream_generation += 1
     sio.start_background_task(stream_telemetry, stream_generation)
 
@@ -152,7 +177,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Post-quantum IoT sensor node")
     parser.add_argument("--transport", choices=["socketio", "mqtt"], default="socketio",
                         help="mqtt uses MQTT over TLS 1.3 and needs broker.py running")
+    parser.add_argument("--legacy", action="store_true",
+                        help="use classical RSA key transport instead of ML-KEM-768, "
+                             "so attack 1 has a breakable channel to demonstrate against")
     args = parser.parse_args()
+    LEGACY_MODE = args.legacy
     if args.transport == "mqtt":
         run_sensor_node_mqtt()
     else:

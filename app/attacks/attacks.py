@@ -11,6 +11,9 @@ Socket.IO client or inside the server process:
 
 import time
 
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from app import legacy
 from app.pqc import ENCAPSULATION_KEY_BYTES, LINK_SENSOR, encapsulate
 
 
@@ -26,7 +29,7 @@ ATTACK_CATALOG = {
         "vector": "Polynomial-time integer factorisation and discrete logarithm on a "
                   "fault-tolerant quantum computer.",
         "impact": "Full recovery of RSA and ECDH private keys, exposing every session "
-                  "key derived from them.",
+                  "key derived from them and all traffic they protect.",
         "mitigation": "Key exchange uses ML-KEM-768, whose security rests on Module-LWE "
                       "rather than factorisation.",
     },
@@ -77,21 +80,67 @@ def describe(name):
     return ATTACK_CATALOG.get(name, {})
 
 
-def stage_classical(log, sleep, report):
-    """Narration only: this system has no classical ECDH to break."""
-    log("ATTACK", "Shor's Algorithm: intercepting classical ECDH key exchange")
+def stage_classical(log, sleep, report, intercept):
+    """Real: breaks the classical RSA channel and decrypts its telemetry.
+
+    Factorisation is performed classically at a reduced key size so it completes
+    in milliseconds. Shor's algorithm is what makes the same recovery feasible
+    against production-size RSA on a quantum computer.
+    """
+    log("ATTACK", "Shor's Algorithm: searching for a classical key exchange to attack")
     sleep(1)
-    log("ATTACK", "Shor's Algorithm: solving discrete logarithm on the curve")
+
+    captured = intercept()
+    if not captured or not captured.get("packet"):
+        log("SUCCESS", "Shor's Algorithm: no classical channel present — nothing to attack")
+        report(
+            "shor",
+            status="NOT APPLICABLE",
+            confidence="Observed",
+            evidence="No RSA or ECDH key exchange was observed. Every active channel "
+                     "uses ML-KEM-768.",
+            outcome="Start a legacy node to see this attack succeed: "
+                    "python -m app.nodes.sensor --legacy",
+        )
+        return
+
+    public = tuple(captured["public"])
+    log("ATTACK", f"Shor's Algorithm: intercepted RSA-{public[0].bit_length()} public key "
+                  f"n={public[0]}")
     sleep(1)
-    log("ERROR", "Shor's Algorithm: classical key recovered — RSA/ECDH would be broken")
+
+    started = time.perf_counter()
+    private, (p_factor, q_factor) = legacy.recover_private_key(public)
+    elapsed = time.perf_counter() - started
+    log("ERROR", f"Shor's Algorithm: modulus factored in {elapsed * 1000:.1f} ms — "
+                 f"n = {p_factor} x {q_factor}")
+    sleep(1)
+
+    session_key = legacy.unwrap_session_key(captured["blocks"], captured["chunk"], private)
+    log("ERROR", f"Shor's Algorithm: session key recovered — {session_key.hex()[:32]}")
+    sleep(1)
+
+    packet = captured["packet"]
+    try:
+        plaintext = AESGCM(session_key).decrypt(
+            bytes.fromhex(packet["nonce"]), bytes.fromhex(packet["ciphertext"]), None
+        ).decode()
+    except Exception as exc:
+        plaintext = f"<decryption failed: {type(exc).__name__}>"
+
+    log("ERROR", f"Shor's Algorithm: BREACH — intercepted telemetry reads {plaintext}")
     report(
         "shor",
-        status="NOT APPLICABLE",
-        confidence="Simulated",
-        evidence="No classical ECDH exchange exists in this system. Shown for contrast: "
-                 "against RSA-2048 or P-256 this recovers the private key.",
-        outcome="This system never performs a classical key exchange, so there is "
-                "nothing here for Shor's algorithm to attack.",
+        status="SUCCEEDED",
+        confidence="Observed",
+        evidence=f"Factored the RSA-{public[0].bit_length()} modulus in "
+                 f"{elapsed * 1000:.1f} ms ({p_factor} x {q_factor}), recovered the "
+                 f"transported session key {session_key.hex()[:32]}..., and decrypted "
+                 f"intercepted telemetry to: {plaintext}",
+        outcome="The classical channel is fully compromised from passive interception "
+                "alone. Factorisation is shown here at a reduced key size; Shor's "
+                "algorithm achieves the same against RSA-2048 on a quantum computer. "
+                "The ML-KEM-768 channels are unaffected.",
     )
 
 
@@ -225,10 +274,10 @@ def stage_mitm(log, sleep, report, deliver):
     )
 
 
-def run_stage(name, log, sleep, report, obtain_public_key, deliver):
+def run_stage(name, log, sleep, report, obtain_public_key, deliver, intercept=lambda: None):
     """Dispatch one stage by the interface's attack identifier."""
     if name == "shor":
-        stage_classical(log, sleep, report)
+        stage_classical(log, sleep, report, intercept)
     elif name == "kyber":
         stage_lattice(log, sleep, report, obtain_public_key)
     elif name == "harvest":
@@ -241,7 +290,7 @@ def run_stage(name, log, sleep, report, obtain_public_key, deliver):
         log("ERROR", f"Unknown attack identifier {name!r}")
 
 
-def run_all(log, sleep, report, obtain_public_key, deliver):
+def run_all(log, sleep, report, obtain_public_key, deliver, intercept=lambda: None):
     for name in ("shor", "kyber", "harvest", "mitm", "grover"):
-        run_stage(name, log, sleep, report, obtain_public_key, deliver)
+        run_stage(name, log, sleep, report, obtain_public_key, deliver, intercept)
         sleep(1)

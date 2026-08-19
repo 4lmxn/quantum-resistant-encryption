@@ -171,7 +171,9 @@ These were found by attacking the running system, not by reasoning about it.
 
 **Other caveats:**
 
-- Stage 1 of the attack demo is narration, not a real cryptanalysis.
+- Attack 1 factors a deliberately small RSA modulus (48-bit) so the break
+  completes in milliseconds. Shor's algorithm is what makes the equivalent
+  recovery feasible against RSA-2048; that part is not simulated, it is cited.
 - No certificate or signature layer: the ML-KEM handshake is unauthenticated, so
   it resists eavesdropping but not an active impersonator who can sit in the
   middle from the very first packet. Production use would add ML-DSA signatures.

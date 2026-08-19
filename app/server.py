@@ -8,6 +8,7 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
 from app.attacks import attacks
+from app import legacy
 from app.config import DEVICE_PSK, SERVER_HOST, SERVER_PORT, TEMP_THRESHOLD
 from app.pqc import (
     ENCAPSULATION_KEY_BYTES,
@@ -37,6 +38,9 @@ class CentralServer:
         # reading above the limit immediately undoes whatever the operator did.
         self.manual_mode = False
         self.findings = {}  # attack id -> last structured result
+        # What a passive interceptor would hold for the legacy RSA channel:
+        # the public key, the wrapped session key, and one captured packet.
+        self.legacy_intercept = None
         self.pending_handshakes = {}  # sid -> (role, decapsulation_key)
         self.sensor_keys = {}  # sid -> aes key
         self.actuator_keys = {}  # sid -> aes key
@@ -269,6 +273,52 @@ def http_telemetry():
     return {"status": "accepted", "threshold": server_engine.temp_threshold}
 
 
+@socketio.on("legacy_hello")
+def handle_legacy_hello(data):
+    """Classical RSA key transport, offered so the contrast can be demonstrated.
+
+    This channel is deliberately weak and exists to be broken by attack 1.
+    """
+    public, private = legacy.generate_keypair()
+    server_engine.pending_handshakes[request.sid] = ("legacy", private)
+    log("ALERT", f"[LEGACY] RSA-{public[0].bit_length()} key transport offered — "
+                 f"no post-quantum protection on this channel.")
+    emit("legacy_public_key", {"n": public[0], "e": public[1]})
+
+
+@socketio.on("legacy_key_transport")
+def handle_legacy_key_transport(data):
+    """The node encrypts a session key under the server's RSA public key."""
+    entry = server_engine.pending_handshakes.pop(request.sid, None)
+    if not entry or entry[0] != "legacy":
+        log("ERROR", "[LEGACY] Key transport with no handshake in progress.")
+        return
+    private = entry[1]
+    blocks, chunk = data["blocks"], data["chunk"]
+    session_key = legacy.unwrap_session_key(blocks, chunk, private)
+
+    server_engine.sensor_keys[request.sid] = session_key
+    server_engine.sessions[request.sid] = {
+        "node": f"legacy@{request.sid[:8]}", "role": "sensor", "kem": "RSA key transport",
+        "public_key_bytes": (private[0].bit_length() + 7) // 8,
+        "ciphertext_bytes": len(blocks) * ((private[0].bit_length() + 7) // 8),
+        "aes_key_bits": len(session_key) * 8,
+        "server_fingerprint": key_fingerprint(session_key),
+        "node_fingerprint": str(data.get("key_fingerprint", "")),
+        "agreed": str(data.get("key_fingerprint", "")) == key_fingerprint(session_key),
+        "transport": "legacy",
+    }
+    # Exactly what an eavesdropper on this channel would have captured.
+    server_engine.legacy_intercept = {
+        "public": (private[0], legacy.PUBLIC_EXPONENT),
+        "blocks": blocks, "chunk": chunk, "packet": None,
+    }
+    log("ERROR", f"[LEGACY] Session key established over RSA-{private[0].bit_length()}. "
+                 f"This channel is breakable — run attack 1.")
+    broadcast_pqc_status()
+    emit("pqc_established", {"role": "sensor"})
+
+
 @socketio.on("pqc_hello")
 def handle_pqc_hello(data):
     role = data.get("role")
@@ -315,6 +365,9 @@ def handle_sensor_telemetry(packet):
     if session_key is None:
         log("ERROR", "[SERVER] Telemetry from a node with no ML-KEM session. Dropped.")
         return
+    if (server_engine.legacy_intercept is not None
+            and server_engine.sessions.get(request.sid, {}).get("transport") == "legacy"):
+        server_engine.legacy_intercept["packet"] = packet
     if not server_engine.accept_nonce(request.sid, packet.get("nonce", "")):
         log("ERROR", "[SERVER] REPLAY BLOCKED: this telemetry packet was already accepted.")
         return
@@ -365,6 +418,7 @@ def handle_trigger_attack(data):
         report_attack,
         server_side_public_key,
         deliver_raw_to_actuators,
+        lambda: server_engine.legacy_intercept,
     )
 
 

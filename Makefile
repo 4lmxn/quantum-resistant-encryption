@@ -14,6 +14,7 @@ help:
 	@echo "  make sensor         thermometer node"
 	@echo "  make actuator       fan node"
 	@echo "  make device         ESP32 stand-in (no hardware needed)"
+	@echo "  make sensor-legacy  classical RSA node — attack 1 breaks this one"
 	@echo "  make attack         run the full attack sequence"
 	@echo ""
 	@echo "MQTT over TLS 1.3 instead of WebSocket:"
@@ -32,6 +33,9 @@ server:
 
 sensor:
 	$(PY) -m app.nodes.sensor
+
+sensor-legacy:      ## classical RSA channel, so attack 1 has something to break
+	$(PY) -m app.nodes.sensor --legacy
 
 actuator:
 	$(PY) -m app.nodes.actuator
