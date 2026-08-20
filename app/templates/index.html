@@ -58,7 +58,7 @@ body{background:var(--bg);color:var(--ink);
 .node .fine{font-size:.75em;color:var(--faint)}
 
 /* the connector: a labelled link, not decoration */
-.link{width:clamp(52px,6vw,110px);display:flex;flex-direction:column;
+.link{width:clamp(124px,13vw,186px);display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:.3em;position:relative}
 .link .track{width:100%;height:2px;background:var(--line);position:relative;overflow:hidden}
 .link .track::after{content:'';position:absolute;inset:0;width:34%;
@@ -69,6 +69,28 @@ body{background:var(--bg);color:var(--ink);
   animation:flow .5s ease-out}
 @keyframes flow{to{transform:translateX(320%)}}
 .link .tag{font-size:.68em;color:var(--faint);white-space:nowrap;letter-spacing:.04em}
+/* The link used to read "AES-256-GCM / Key A", which tells a viewer nothing.
+   It now says what travels, that it is locked, and which key locked it. */
+.link .cargo{font-size:.74em;font-weight:600;color:var(--fg);text-align:center;
+  line-height:1.25;white-space:normal}
+.link .arrow{color:var(--accent)}
+.link .sealkey{font-size:.67em;color:var(--accent);font-family:var(--mono);
+  white-space:nowrap;margin-top:.15em}
+.link .sealnote{font-size:.63em;color:var(--faint);text-align:center;
+  line-height:1.25;white-space:normal}
+.link .sealnote.diff{color:var(--warn)}
+.link .count{font-size:.63em;color:var(--faint);font-family:var(--mono);white-space:nowrap}
+.link .count.hasreject{color:var(--bad)}
+.lad{border:1px solid var(--line);border-radius:6px;padding:.6em .8em;margin-bottom:.7em}
+.lad-h{font-weight:600;font-size:.9em;display:flex;justify-content:space-between;
+  align-items:baseline;gap:.6em;margin-bottom:.4em}
+.lad-n{font-family:var(--mono);font-size:.78em;color:var(--faint);font-weight:400}
+.lad-steps{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:.35em}
+.lad-steps li{font-size:.84em;line-height:1.45}
+.lad-steps li b{color:var(--fg)}
+.lad-steps li span{display:block;color:var(--faint);font-size:.92em;white-space:normal}
+.lad-steps code{font-family:var(--mono);color:var(--accent)}
+.okx{color:var(--ok)}.nox{color:var(--bad)}
 
 /* --------------------------- main grid --------------------------- */
 .main{display:grid;grid-template-columns:minmax(240px,1fr) minmax(300px,1.35fr) minmax(280px,1.25fr);
@@ -205,16 +227,21 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
   <!-- pipeline: sensor -> server -> actuator, with the live link between them -->
   <section class="pipe" aria-label="Signal pipeline">
     <article class="node" id="src-card">
-      <div class="top"><span class="name" id="src-name">Process transmitter</span>
-        <span class="lane safety" id="lane">SAFETY</span></div>
+      <div class="top"><span class="name" id="src-name">Temperature sensor · TT-101</span>
+        <span class="lane safety" id="lane">CAN TRIP THE PLANT</span></div>
       <div class="big warn mono" id="temp" role="status" aria-live="polite" aria-label="Temperature">—— °C</div>
-      <div class="meta" id="humidity">Awaiting telemetry</div>
-      <div class="fine" id="lane-note">Awaiting the first reading</div>
-      <div class="fine" id="fp-sensor">Safety sensor: key exchange pending</div>
+      <div class="meta" id="humidity">Waiting for the first reading</div>
+      <div class="fine" id="lane-note">This reading is allowed to trip the plant</div>
+      <div class="fine" id="fp-sensor">No key yet — this node holds nothing until its key exchange finishes</div>
     </article>
 
-    <div class="link" id="link-in"><span class="tag">AES-256-GCM</span>
-      <div class="track" aria-hidden="true"></div><span class="tag">Key A</span></div>
+    <div class="link" id="link-in">
+      <span class="cargo">Temperature reading<span class="arrow" aria-hidden="true"> &#9654;</span></span>
+      <div class="track" aria-hidden="true"></div>
+      <span class="sealkey" id="seal-in">locked with key &mdash;</span>
+      <span class="sealnote">only these two ends hold it</span>
+      <span class="count" id="count-in">0 sealed &middot; 0 rejected</span>
+    </div>
 
     <article class="node" id="sis-card">
       <div class="top"><span class="name">SIS-01 safety function</span>
@@ -242,12 +269,19 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
       </div>
     </article>
 
-    <div class="link" id="link-out"><span class="tag">AES-256-GCM</span>
-      <div class="track" aria-hidden="true"></div><span class="tag">Key B</span></div>
+    <div class="link" id="link-out">
+      <span class="cargo"><span class="arrow" aria-hidden="true">&#9664; </span>Shutdown command</span>
+      <div class="track" aria-hidden="true"></div>
+      <span class="sealkey" id="seal-out">locked with key &mdash;</span>
+      <span class="sealnote diff">a different key &mdash; not the one above</span>
+      <span class="count" id="count-out">0 sealed &middot; 0 rejected</span>
+    </div>
 
     <article class="node" id="act-card">
-      <div class="top"><span class="name">Final element · XV-101</span><span class="keytag">Key B</span></div>
+      <div class="top"><span class="name">Shutdown valve · XV-101</span>
+        <span class="lane safety">CAN TRIP THE PLANT</span></div>
       <div class="big ok mono" id="valve" role="status" aria-live="polite">XV-101 OPEN</div>
+      <div class="fine" id="fp-actuator">No key yet — this node holds nothing until its key exchange finishes</div>
       <div class="unsigned" id="main">
         <span class="tagline">Legacy unsigned path — will be refused</span>
         <div class="row">
@@ -287,8 +321,8 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
       <div class="head">
         <div class="tabs" role="tablist" aria-label="Detail views">
           <button class="tab" role="tab" id="tab-0" aria-controls="pane-0" aria-selected="true" tabindex="0" onclick="tab(0)">Event log</button>
-          <button class="tab" role="tab" id="tab-1" aria-controls="pane-1" aria-selected="false" tabindex="-1" onclick="tab(1)">Key exchange</button>
-          <button class="tab" role="tab" id="tab-2" aria-controls="pane-2" aria-selected="false" tabindex="-1" onclick="tab(2)">Channel payload</button>
+          <button class="tab" role="tab" id="tab-1" aria-controls="pane-1" aria-selected="false" tabindex="-1" onclick="tab(1)">How the keys were agreed</button>
+          <button class="tab" role="tab" id="tab-2" aria-controls="pane-2" aria-selected="false" tabindex="-1" onclick="tab(2)">What an eavesdropper sees</button>
           <button class="tab" role="tab" id="tab-3" aria-controls="pane-3" aria-selected="false" tabindex="-1" onclick="tab(3)">Limitations</button>
         </div>
       </div>
@@ -300,17 +334,22 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
         </div>
 
         <div id="pane-1" role="tabpanel" aria-labelledby="tab-1" tabindex="0" hidden>
-          <table>
-            <thead><tr><th scope="col">Node</th><th scope="col">Key exchange</th>
-              <th scope="col" class="num">ek</th><th scope="col" class="num">ct</th>
-              <th scope="col">Node key</th><th scope="col">Server key</th><th scope="col">Match</th><th scope="col">Device auth</th></tr></thead>
+          <p class="fine" style="white-space:normal;margin-bottom:.8em">Every node agrees its own key
+            with the server before it is trusted with anything. Nobody types a key in, and no key is
+            ever sent. Here is what actually happened on this run:</p>
+          <div id="ladder"><p class="empty">No node has completed a key exchange yet.</p></div>
+          <table style="margin-top:.9em">
+            <thead><tr><th scope="col">Node</th><th scope="col">Carried over</th>
+              <th scope="col" class="num">Lock sent</th><th scope="col" class="num">Reply</th>
+              <th scope="col">Node's key</th><th scope="col">Server's key</th>
+              <th scope="col">Same?</th><th scope="col">Identity proved</th></tr></thead>
             <tbody id="sessions"><tr><td colspan="8" style="color:var(--faint)">No nodes connected</td></tr></tbody>
           </table>
-          <p class="fine" style="margin-top:.7em;white-space:normal">Independent ML-KEM-768 exchange per link.
-            Key material is never transmitted; fingerprints are SHA-256 digests proving both parties
-            derived the same key. Differing fingerprints across rows demonstrate Dual-KEM separation.</p>
+          <p class="fine" style="margin-top:.7em;white-space:normal">The two &quot;key&quot; columns are
+            SHA-256 fingerprints, not keys — one-way, safe to display, and identical only if both sides
+            really did reach the same secret. Compare the two rows: the sensor and the valve end up with
+            <b>different</b> keys, so breaking one link gets you nothing on the other.</p>
         </div>
-
         <div id="pane-2" role="tabpanel" aria-labelledby="tab-2" tabindex="0" hidden>
           <div class="wbox e"><div class="t"><span>Ciphertext on the wire</span><span id="wire-size">—</span></div>
             <div class="hex" id="cipher">Awaiting telemetry</div></div>
@@ -465,18 +504,19 @@ socket.on('update_telemetry', d => {
   // safety_relevant is the whole distinction: a BPCS reading is shown, never obeyed.
   const safety = d.safety_relevant !== false;
   $('src-card').classList.toggle('bpcs', !safety);
-  $('src-name').textContent = d.source || (safety ? 'Sensor node' : 'BPCS transmitter');
+  $('src-name').textContent = safety ? 'Temperature sensor · TT-101' : (d.source || 'Monitoring transmitter');
   $('lane').className = 'lane ' + (safety ? 'safety' : 'bpcs');
-  $('lane').textContent = safety ? 'SAFETY' : 'BPCS — NOT SAFETY RATED';
+  $('lane').textContent = safety ? 'CAN TRIP THE PLANT' : 'CANNOT TRIP THE PLANT';
   $('lane-note').textContent = safety
-    ? 'Safety lane · ML-KEM-768 + ML-DSA-65 · this reading can trip SIS-01'
-    : 'BPCS lane · provisioned pre-shared key · displayed only, can never trip SIS-01';
+    ? 'This reading is allowed to trip the plant · proved its identity with ML-DSA-65'
+    : 'Monitoring only · this one is NOT allowed to trip the plant · its key is in the source code';
   // A BPCS reading stays grey even when it is over the setpoint, because it is
   // not allowed to mean anything to the safety function.
   $('temp').className = 'big mono ' + (!safety ? 'off' : (d.over_setpoint ? 'bad' : 'warn'));
   $('temp').textContent = d.temp.toFixed(2) + ' °C' + (safety ? '' : '  (BPCS)');
   $('humidity').textContent = 'Relative humidity ' + d.humidity.toFixed(2) + ' %';
   pulse($('link-in'), false);
+  if (safety) countSeal('count-in', false);
   applySis(d);
   if (d.wire && d.wire.ciphertext) {
     $('cipher').textContent = d.wire.nonce + d.wire.ciphertext;
@@ -540,7 +580,7 @@ socket.on('update_actuator_ui', d => setValve(d.valve));
 socket.on('security_log', l => {
   const cls = {SUCCESS:'l-ok',ERROR:'l-bad',ALERT:'l-warn',ATTACK:'l-atk'}[l.type] || 'l-ok';
   if (/XV-101|TRIP latched|Trip reset/.test(l.msg)) pulse($('link-out'), false);
-  if (/REJECTED|Tampering/.test(l.msg)) pulse($('link-out'), true);
+  if (/REJECTED|Tampering/.test(l.msg)) { pulse($('link-out'), true); countSeal('count-out', true); }
   const log = $('log'), p = document.createElement('p');
   p.innerHTML = '<time></time><span class="' + cls + '"></span>';
   p.querySelector('time').textContent = new Date().toLocaleTimeString();
@@ -548,6 +588,8 @@ socket.on('security_log', l => {
   log.appendChild(p); log.parentElement.scrollTop = log.parentElement.scrollHeight;
   while (log.children.length > 300) log.removeChild(log.firstChild);
 });
+
+socket.on('update_actuator_ui', () => countSeal('count-out', false));
 
 socket.on('pqc_status', d => {
   const rows = d.sessions || [];
@@ -559,12 +601,67 @@ socket.on('pqc_status', d => {
       <td class="${s.authenticated ? 'ok':'no'}">${s.authenticated ? 'ML-DSA-65':'NONE'}</td></tr>`).join('')
     : '<tr><td colspan="8" style="color:var(--faint)">No nodes connected</td></tr>';
   const sensor = rows.find(s => s.role === 'sensor');
+  const actuator = rows.find(s => s.role === 'actuator');
   // Always attributed to the safety sensor, so it can never be read as
   // describing whatever BPCS source happens to be on the card right now.
   $('fp-sensor').textContent = sensor
-    ? 'Safety sensor: ML-KEM-768 · session key ' + sensor.server_fingerprint
-    : 'Safety sensor: key exchange pending';
+    ? 'Own key ' + sensor.server_fingerprint + ' · agreed by ML-KEM-768 · identity proved by ML-DSA-65'
+    : 'No key yet — this node holds nothing until its key exchange finishes';
+  $('fp-actuator').textContent = actuator
+    ? 'Own key ' + actuator.server_fingerprint + ' · agreed by ML-KEM-768 · identity proved by ML-DSA-65'
+    : 'No key yet — this node holds nothing until its key exchange finishes';
+
+  // The fingerprints on the two links are what make domain separation visible:
+  // same handshake, same maths, two keys that are plainly not each other.
+  setSeal('seal-in', sensor);
+  setSeal('seal-out', actuator);
+  renderLadder(sensor, actuator);
 });
+
+function setSeal(id, row) {
+  $(id).textContent = row ? 'locked with key ' + row.server_fingerprint : 'locked with key —';
+}
+
+/* Packet counters, so "sealed" is a number a viewer can watch move rather than
+   a claim they have to take on trust. */
+const seals = {'count-in': [0, 0], 'count-out': [0, 0]};
+function countSeal(id, rejected) {
+  const c = seals[id];
+  c[rejected ? 1 : 0]++;
+  $(id).textContent = c[0] + ' sealed · ' + c[1] + ' rejected';
+  if (c[1]) $(id).classList.add('hasreject');
+}
+
+/* The handshake, drawn as the four steps it actually is. Byte counts are the
+   real ML-KEM-768 sizes reported by the server, not decoration. */
+function renderLadder(sensor, actuator) {
+  const el = $('ladder');
+  if (!el) return;
+  const rows = [sensor, actuator].filter(Boolean);
+  if (!rows.length) {
+    el.innerHTML = '<p class="empty">No node has completed a key exchange yet.</p>';
+    return;
+  }
+  el.innerHTML = rows.map(r => `
+    <div class="lad">
+      <div class="lad-h">${r.role === 'sensor' ? 'Temperature sensor' : 'Shutdown valve'}
+        <span class="lad-n">${r.node}</span></div>
+      <ol class="lad-steps">
+        <li><b>Server makes a fresh throwaway lock</b><span>a new one per connection, so
+          recording today's traffic is useless tomorrow</span></li>
+        <li><b>Server sends the open lock, signed</b>
+          <span>${r.public_key_bytes} bytes · the ML-DSA-65 signature is what stops
+          an impostor swapping in their own lock</span></li>
+        <li><b>Node locks a secret inside it</b>
+          <span>${r.ciphertext_bytes} bytes back · only the server's private half can open it</span></li>
+        <li><b>Both sides grind that secret into the same ${r.aes_key_bits}-bit key</b>
+          <span>node got <code>${r.node_fingerprint}</code>, server got
+          <code>${r.server_fingerprint}</code> —
+          <b class="${r.agreed ? 'okx' : 'nox'}">${r.agreed ? 'identical' : 'MISMATCH'}</b>,
+          and the key itself never crossed the wire</span></li>
+      </ol>
+    </div>`).join('');
+}
 
 /* The three unsigned legacy controls. They still emit exactly what they always
    emitted; the server refuses all three and says so in red. Nothing here updates

@@ -53,6 +53,12 @@ class CentralServer:
         # Operator command nonces, so a captured signed instruction is
         # single-use and cannot be delivered a second time during an upset.
         self.operator_nonces = set()
+        # Which enrolled identity holds which live session. A safety transmitter
+        # is a physical thing: there is exactly one TT-101 on the plant, so two
+        # sessions claiming to be it means either a misconfigured second node or
+        # someone using a stolen key, and both must be refused rather than
+        # quietly averaged into the log.
+        self.active_devices = {}  # device_id -> sid
         self.findings = {}  # attack id -> last structured result
         # What a passive interceptor would hold for the legacy RSA channel:
         # the public key, the wrapped session key, and one captured packet.
@@ -114,6 +120,9 @@ class CentralServer:
         return True
 
     def forget(self, sid):
+        for device_id, held_by in list(self.active_devices.items()):
+            if held_by == sid:
+                del self.active_devices[device_id]
         self.pending_handshakes.pop(sid, None)
         self.seen_nonces.pop(sid, None)
         self.sensor_keys.pop(sid, None)
@@ -466,6 +475,20 @@ def handle_pqc_encapsulation(data):
             server_engine.forget(request.sid)
             log("ERROR", f"[PQC] Handshake refused: bad ML-DSA signature from {device_id}.")
             return
+
+        # A valid signature proves the key, not that this is the only holder of
+        # it. Refuse a second live session for an identity that already has one:
+        # two nodes reporting as the same transmitter is a fault however it
+        # happened, and on a safety loop it is one that hides in plain sight --
+        # the readings interleave and the log looks busy rather than wrong.
+        holder = server_engine.active_devices.get(device_id)
+        if holder is not None and holder != request.sid:
+            server_engine.forget(request.sid)
+            log("ERROR", f"[PQC] Handshake refused: {device_id} already holds a live "
+                         f"session on {holder[:8]}. One identity, one session.")
+            emit("pqc_refused", {"reason": "duplicate_device_id", "device_id": device_id})
+            return
+        server_engine.active_devices[device_id] = request.sid
 
     try:
         role = server_engine.complete_handshake(

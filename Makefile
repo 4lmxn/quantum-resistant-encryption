@@ -79,6 +79,7 @@ test:
 	$(PY) -m tests.test_identity
 	$(PY) -m tests.test_operator_auth
 	$(PY) -m tests.test_heartbeat
+	$(PY) -m tests.test_duplicate_identity
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:

@@ -154,6 +154,23 @@ def on_public_key(data):
     )
 
 
+@sio.on("pqc_refused")
+def on_refused(data):
+    """The server turned this handshake away. Say why and stop.
+
+    Reconnecting would only produce the same refusal, and a node that silently
+    retries a rejected identity is indistinguishable from one being used to
+    brute-force a session.
+    """
+    reason = data.get("reason", "unknown")
+    if reason == "duplicate_device_id":
+        print(f"[ACTUATOR NODE] REFUSED: {data.get('device_id')} already has a live session "
+              f"on this server. Another copy of this node is probably still running.")
+    else:
+        print(f"[ACTUATOR NODE] REFUSED by the server: {reason}")
+    sio.disconnect()
+
+
 @sio.on("pqc_established")
 def on_established(data):
     print("[ACTUATOR NODE] Session Key B derived. Listening for server commands...")
