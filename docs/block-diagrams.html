@@ -1,0 +1,437 @@
+<title>Dual-KEM Pipeline Diagrams</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --paper:#fcfcfd; --card:#ffffff; --ink:#141a24; --ink-2:#4a5568; --ink-3:#78849a;
+  --rule:#d8dde6; --rule-2:#eaedf2;
+  --sense:#b45309; --crypto:#6d28d9; --wire:#0369a1; --act:#0f766e; --bad:#b91c1c;
+  --sense-bg:#fdf5e9; --crypto-bg:#f4f0fd; --wire-bg:#eaf4fb; --act-bg:#e8f6f4; --bad-bg:#fdeeee;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0f131a; --card:#161b25; --ink:#e9edf4; --ink-2:#a4b0c2; --ink-3:#77839a;
+    --rule:#2b323e; --rule-2:#1e242e;
+    --sense:#f0a94a; --crypto:#b79cf7; --wire:#5cb6e8; --act:#4fd1c0; --bad:#f08b8b;
+    --sense-bg:#2a2113; --crypto-bg:#221c34; --wire-bg:#132631; --act-bg:#12292a; --bad-bg:#2c1717;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0f131a; --card:#161b25; --ink:#e9edf4; --ink-2:#a4b0c2; --ink-3:#77839a;
+  --rule:#2b323e; --rule-2:#1e242e;
+  --sense:#f0a94a; --crypto:#b79cf7; --wire:#5cb6e8; --act:#4fd1c0; --bad:#f08b8b;
+  --sense-bg:#2a2113; --crypto-bg:#221c34; --wire-bg:#132631; --act-bg:#12292a; --bad-bg:#2c1717;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:'IBM Plex Sans',system-ui,sans-serif; line-height:1.55;
+  padding:48px 24px 96px;
+}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+header{border-bottom:2px solid var(--ink);padding-bottom:20px}
+h1{font-size:clamp(24px,3vw,34px);font-weight:600;letter-spacing:-.02em;text-wrap:balance}
+header p{color:var(--ink-2);margin-top:8px;max-width:70ch;font-size:15px}
+.meta{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-3);
+  margin-top:14px;display:flex;flex-wrap:wrap;gap:6px 22px}
+figure{display:flex;flex-direction:column;gap:14px}
+.fignum{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--crypto)}
+figure h2{font-size:19px;font-weight:600;letter-spacing:-.01em}
+.frame{background:var(--card);border:1px solid var(--rule);border-radius:3px;
+  padding:20px;overflow-x:auto}
+svg{display:block;max-width:100%;height:auto;min-width:640px}
+figcaption{color:var(--ink-2);font-size:14px;max-width:78ch}
+figcaption b{color:var(--ink);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:10px 24px;font-size:12.5px;color:var(--ink-2);
+  font-family:'IBM Plex Mono',monospace}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.swatch{width:11px;height:11px;border-radius:2px;border:1px solid currentColor}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+caption{text-align:left;font-weight:600;padding-bottom:8px;font-size:15px}
+th{text-align:left;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600;padding:8px 12px;border-bottom:1px solid var(--rule)}
+td{padding:9px 12px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+td.m{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>Post-Quantum Secure Communication for IoT</h1>
+  <p>Block diagrams for the Dual-KEM sensor&ndash;server&ndash;actuator pipeline: hardware,
+     signal inputs and outputs, data flow, and the cryptographic operation applied
+     at every hop.</p>
+  <div class="meta">
+    <span>CRYSTALS-Kyber ML-KEM-768 &middot; FIPS 203</span>
+    <span>CRYSTALS-Dilithium ML-DSA-65 &middot; FIPS 204</span>
+    <span>AES-256-GCM</span>
+    <span>SHAKE-256 + HKDF-SHA256</span>
+  </div>
+</header>
+
+<!-- ============================ FIGURE 1 ============================ -->
+<figure>
+  <div class="fignum">Figure 1</div>
+  <h2>System block diagram</h2>
+  <div class="frame">
+    <svg viewBox="0 0 1140 620" role="img"
+         aria-label="Three-node pipeline. A DHT22 sensor feeds an ESP32 or simulated sensor node, which seals readings with AES-256-GCM under Key A and sends them to the central server. The server decrypts, compares against a threshold, and seals a command under Key B for the actuator node, which verifies the tag before driving a relay.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <!-- band labels -->
+      <g font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600"
+         fill="var(--ink-3)" letter-spacing="1.1">
+        <text x="8" y="76">PHYSICAL</text>
+        <text x="8" y="196">NODE</text>
+        <text x="8" y="330">CHANNEL</text>
+        <text x="8" y="470">KEY</text>
+      </g>
+      <g stroke="var(--rule-2)" stroke-width="1">
+        <line x1="0" y1="120" x2="1140" y2="120"/>
+        <line x1="0" y1="266" x2="1140" y2="266"/>
+        <line x1="0" y1="400" x2="1140" y2="400"/>
+      </g>
+
+      <!-- ---------- PHYSICAL INPUTS ---------- -->
+      <g>
+        <rect x="90" y="34" width="150" height="66" rx="2" fill="var(--sense-bg)"
+              stroke="var(--sense)" stroke-width="1.5"/>
+        <text x="165" y="58" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">DHT22</text>
+        <text x="165" y="76" text-anchor="middle" font-size="11" fill="var(--ink-2)">temperature &middot; humidity</text>
+        <text x="165" y="91" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-3)">1-wire &middot; GPIO 15</text>
+      </g>
+      <g>
+        <rect x="440" y="34" width="150" height="66" rx="2" fill="var(--sense-bg)"
+              stroke="var(--sense)" stroke-width="1.5"/>
+        <text x="515" y="58" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">Operator</text>
+        <text x="515" y="76" text-anchor="middle" font-size="11" fill="var(--ink-2)">threshold &middot; override</text>
+        <text x="515" y="91" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-3)">browser dashboard</text>
+      </g>
+
+      <!-- ---------- PHYSICAL OUTPUT ---------- -->
+      <g>
+        <rect x="890" y="34" width="160" height="66" rx="2" fill="var(--act-bg)"
+              stroke="var(--act)" stroke-width="1.5"/>
+        <text x="970" y="58" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">Relay + fan</text>
+        <text x="970" y="76" text-anchor="middle" font-size="11" fill="var(--ink-2)">mains load switched</text>
+        <text x="970" y="91" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-3)">GPIO 26 &middot; GPIO 27 LED</text>
+      </g>
+
+      <!-- ---------- NODE BAND ---------- -->
+      <g>
+        <rect x="60" y="150" width="210" height="92" rx="2" fill="var(--card)"
+              stroke="var(--ink)" stroke-width="1.5"/>
+        <text x="165" y="174" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Sensor node</text>
+        <text x="165" y="192" text-anchor="middle" font-size="11" fill="var(--ink-2)">ESP32-WROOM-32</text>
+        <text x="165" y="208" text-anchor="middle" font-size="11" fill="var(--ink-2)">or simulated node</text>
+        <text x="165" y="230" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace"
+              fill="var(--crypto)">seal &middot; AES-256-GCM</text>
+      </g>
+      <g>
+        <rect x="410" y="150" width="210" height="92" rx="2" fill="var(--card)"
+              stroke="var(--ink)" stroke-width="1.5"/>
+        <text x="515" y="174" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Central server</text>
+        <text x="515" y="192" text-anchor="middle" font-size="11" fill="var(--ink-2)">decrypt &middot; verify tag</text>
+        <text x="515" y="208" text-anchor="middle" font-size="11" fill="var(--ink-2)">threshold decision</text>
+        <text x="515" y="230" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace"
+              fill="var(--crypto)">reseal &middot; AES-256-GCM</text>
+      </g>
+      <g>
+        <rect x="760" y="150" width="210" height="92" rx="2" fill="var(--card)"
+              stroke="var(--ink)" stroke-width="1.5"/>
+        <text x="865" y="174" text-anchor="middle" font-size="13.5" font-weight="600" fill="var(--ink)">Actuator node</text>
+        <text x="865" y="192" text-anchor="middle" font-size="11" fill="var(--ink-2)">verify GCM tag</text>
+        <text x="865" y="208" text-anchor="middle" font-size="11" fill="var(--ink-2)">drive relay on pass</text>
+        <text x="865" y="230" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace"
+              fill="var(--bad)">discard on fail</text>
+      </g>
+
+      <!-- physical -> node, node -> physical -->
+      <g stroke="var(--sense)" stroke-width="1.6" fill="none" color="var(--sense)">
+        <line x1="165" y1="100" x2="165" y2="146" marker-end="url(#ar)"/>
+        <line x1="515" y1="100" x2="515" y2="146" marker-end="url(#ar)"/>
+      </g>
+      <g stroke="var(--act)" stroke-width="1.6" fill="none" color="var(--act)">
+        <line x1="940" y1="146" x2="940" y2="104" marker-end="url(#ar)"/>
+      </g>
+      <text x="178" y="128" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">analogue read, 4 s</text>
+      <text x="528" y="128" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">setpoint</text>
+      <text x="952" y="128" font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">switch</text>
+
+      <!-- ---------- CHANNEL BAND ---------- -->
+      <g>
+        <rect x="285" y="288" width="110" height="52" rx="2" fill="var(--wire-bg)"
+              stroke="var(--wire)" stroke-width="1.3"/>
+        <text x="340" y="309" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Channel A</text>
+        <text x="340" y="326" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-2)">telemetry</text>
+      </g>
+      <g>
+        <rect x="635" y="288" width="110" height="52" rx="2" fill="var(--wire-bg)"
+              stroke="var(--wire)" stroke-width="1.3"/>
+        <text x="690" y="309" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Channel B</text>
+        <text x="690" y="326" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-2)">command</text>
+      </g>
+
+      <!-- node -> channel -> node -->
+      <g stroke="var(--wire)" stroke-width="1.8" fill="none" color="var(--wire)">
+        <path d="M270 196 L340 196 L340 284" marker-end="url(#ar)"/>
+        <path d="M340 344 L340 372 L515 372 L515 246" marker-end="url(#ar)"/>
+        <path d="M620 196 L690 196 L690 284" marker-end="url(#ar)"/>
+        <path d="M690 344 L690 372 L865 372 L865 246" marker-end="url(#ar)"/>
+      </g>
+      <g font-size="10" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">
+        <text x="276" y="188">sealed packet</text>
+        <text x="352" y="366">nonce &Vert; ct &Vert; tag</text>
+        <text x="626" y="188">FAN_ON / FAN_OFF</text>
+        <text x="702" y="366">nonce &Vert; ct &Vert; tag</text>
+      </g>
+
+      <!-- transport note -->
+      <text x="570" y="392" text-anchor="middle" font-size="10.5"
+            font-family="IBM Plex Mono, monospace" fill="var(--wire)">
+        transport: WebSocket &middot; MQTT over TLS 1.3 (:8883) &middot; HTTP POST /telemetry
+      </text>
+
+      <!-- ---------- KEY BAND ---------- -->
+      <g>
+        <rect x="60" y="424" width="1010" height="100" rx="2" fill="var(--crypto-bg)"
+              stroke="var(--crypto)" stroke-width="1.4"/>
+        <text x="80" y="448" font-size="12" font-weight="600" fill="var(--ink)">Dual-KEM key establishment &mdash; one independent exchange per channel</text>
+
+        <rect x="88" y="462" width="196" height="46" rx="2" fill="var(--card)" stroke="var(--crypto)" stroke-width="1"/>
+        <text x="186" y="480" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">ML-KEM-768 keygen</text>
+        <text x="186" y="497" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-2)">ek 1184 B &middot; dk 2400 B</text>
+
+        <rect x="320" y="462" width="196" height="46" rx="2" fill="var(--card)" stroke="var(--crypto)" stroke-width="1"/>
+        <text x="418" y="480" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">encapsulate</text>
+        <text x="418" y="497" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-2)">ct 1088 B &rarr; secret</text>
+
+        <rect x="552" y="462" width="196" height="46" rx="2" fill="var(--card)" stroke="var(--crypto)" stroke-width="1"/>
+        <text x="650" y="480" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">SHAKE-256 &rarr; HKDF</text>
+        <text x="650" y="497" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-2)">domain-separated</text>
+
+        <rect x="784" y="462" width="262" height="46" rx="2" fill="var(--card)" stroke="var(--crypto)" stroke-width="1"/>
+        <text x="915" y="480" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">Key A &middot; Key B</text>
+        <text x="915" y="497" text-anchor="middle" font-size="10" font-family="IBM Plex Mono, monospace"
+              fill="var(--ink-2)">256-bit each, never transmitted</text>
+
+        <g stroke="var(--crypto)" stroke-width="1.4" fill="none" color="var(--crypto)">
+          <line x1="284" y1="485" x2="316" y2="485" marker-end="url(#ar)"/>
+          <line x1="516" y1="485" x2="548" y2="485" marker-end="url(#ar)"/>
+          <line x1="748" y1="485" x2="780" y2="485" marker-end="url(#ar)"/>
+        </g>
+      </g>
+
+      <!-- keys feed the channels -->
+      <g stroke="var(--crypto)" stroke-width="1.4" stroke-dasharray="4 3" fill="none" color="var(--crypto)">
+        <path d="M300 424 L300 400 L316 400 L316 344" marker-end="url(#ar)"/>
+        <path d="M760 424 L760 400 L714 400 L714 344" marker-end="url(#ar)"/>
+      </g>
+      <text x="152" y="546" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">
+        fresh keypair per connection &middot; zeroized on disconnect</text>
+      <text x="700" y="546" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">
+        Key A &ne; Key B &mdash; a break on one channel does not carry to the other</text>
+
+      <!-- adversary -->
+      <g>
+        <rect x="410" y="574" width="320" height="34" rx="2" fill="var(--bad-bg)"
+              stroke="var(--bad)" stroke-width="1.3" stroke-dasharray="5 3"/>
+        <text x="570" y="596" text-anchor="middle" font-size="11.5" fill="var(--bad)" font-weight="600">
+          Adversary &mdash; passive capture and active injection on both channels</text>
+      </g>
+      <g stroke="var(--bad)" stroke-width="1.3" stroke-dasharray="4 3" fill="none" color="var(--bad)">
+        <line x1="470" y1="574" x2="368" y2="346" marker-end="url(#ar)"/>
+        <line x1="670" y1="574" x2="716" y2="346" marker-end="url(#ar)"/>
+      </g>
+    </svg>
+  </div>
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--sense-bg);color:var(--sense)"></i>physical input</span>
+    <span><i class="swatch" style="background:var(--act-bg);color:var(--act)"></i>physical output</span>
+    <span><i class="swatch" style="background:var(--wire-bg);color:var(--wire)"></i>encrypted channel</span>
+    <span><i class="swatch" style="background:var(--crypto-bg);color:var(--crypto)"></i>key material</span>
+    <span><i class="swatch" style="background:var(--bad-bg);color:var(--bad)"></i>adversary</span>
+  </div>
+  <figcaption><b>Two independent encrypted channels, not one.</b> Telemetry travels
+    sealed under Key A and commands under Key B, each key derived from its own
+    ML-KEM-768 exchange. The adversary sits on both channels but holds neither key;
+    the actuator verifies the GCM tag before driving the relay, so an injected
+    command is discarded rather than executed.</figcaption>
+</figure>
+
+<!-- ============================ FIGURE 2 ============================ -->
+<figure>
+  <div class="fignum">Figure 2</div>
+  <h2>Key establishment sequence</h2>
+  <div class="frame">
+    <svg viewBox="0 0 1000 430" role="img"
+         aria-label="Sequence diagram of the authenticated handshake: the node announces its role, the server generates an ML-KEM keypair and signs the encapsulation key with ML-DSA, the node verifies that signature, encapsulates, signs the transcript, and the server verifies and derives the same session key.">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+
+      <g>
+        <rect x="70" y="20" width="200" height="40" rx="2" fill="var(--card)" stroke="var(--ink)" stroke-width="1.5"/>
+        <text x="170" y="45" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">Node (sensor / actuator)</text>
+        <rect x="700" y="20" width="200" height="40" rx="2" fill="var(--card)" stroke="var(--ink)" stroke-width="1.5"/>
+        <text x="800" y="45" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">Central server</text>
+      </g>
+      <g stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4">
+        <line x1="170" y1="60" x2="170" y2="400"/>
+        <line x1="800" y1="60" x2="800" y2="400"/>
+      </g>
+
+      <g font-size="11.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">
+        <g stroke="var(--ink-2)" stroke-width="1.5" color="var(--ink-2)">
+          <line x1="170" y1="98" x2="794" y2="98" marker-end="url(#ar2)"/>
+        </g>
+        <text x="482" y="90" text-anchor="middle">1 &middot; hello { role }</text>
+
+        <g stroke="var(--crypto)" stroke-width="1.7" color="var(--crypto)">
+          <line x1="800" y1="152" x2="176" y2="152" marker-end="url(#ar2)"/>
+        </g>
+        <text x="488" y="144" text-anchor="middle" fill="var(--crypto)">2 &middot; ek (1184 B) + ML-DSA-65 signature (3309 B)</text>
+        <text x="800" y="128" text-anchor="middle" fill="var(--ink-3)" font-size="10">keygen + sign</text>
+
+        <text x="170" y="182" text-anchor="middle" fill="var(--ink-3)" font-size="10">verify server signature</text>
+        <text x="170" y="196" text-anchor="middle" fill="var(--bad)" font-size="10">fail &rarr; disconnect</text>
+
+        <g stroke="var(--crypto)" stroke-width="1.7" color="var(--crypto)">
+          <line x1="170" y1="238" x2="794" y2="238" marker-end="url(#ar2)"/>
+        </g>
+        <text x="482" y="230" text-anchor="middle" fill="var(--crypto)">3 &middot; ct (1088 B) + device signature + device id</text>
+        <text x="170" y="216" text-anchor="middle" fill="var(--ink-3)" font-size="10">encapsulate + sign transcript</text>
+
+        <text x="800" y="266" text-anchor="middle" fill="var(--ink-3)" font-size="10">verify device is enrolled</text>
+        <text x="800" y="280" text-anchor="middle" fill="var(--bad)" font-size="10">fail &rarr; refuse handshake</text>
+
+        <g stroke="var(--act)" stroke-width="1.5" color="var(--act)">
+          <line x1="800" y1="322" x2="176" y2="322" marker-end="url(#ar2)"/>
+        </g>
+        <text x="488" y="314" text-anchor="middle" fill="var(--act)">4 &middot; established</text>
+      </g>
+
+      <rect x="70" y="352" width="860" height="48" rx="2" fill="var(--crypto-bg)" stroke="var(--crypto)" stroke-width="1.2"/>
+      <text x="500" y="372" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">
+        Both sides independently derive the same 256-bit key</text>
+      <text x="500" y="390" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">
+        shared secret &rarr; SHAKE-256(secret &Vert; link label) &rarr; HKDF-SHA256 &rarr; AES-256 key &middot; key itself never on the wire</text>
+    </svg>
+  </div>
+  <figcaption><b>The signatures are what make the exchange authenticated.</b>
+    ML-KEM alone proves nobody observed the exchange, not who was on the other end.
+    Signing the encapsulation key stops an adversary substituting their own; requiring
+    an enrolled device signature stops anything that merely claims a role from
+    receiving commands. Steps 2 and 3 carry the ML-DSA additions.</figcaption>
+</figure>
+
+<!-- ============================ FIGURE 3 ============================ -->
+<figure>
+  <div class="fignum">Figure 3</div>
+  <h2>Packet structure and per-message cost</h2>
+  <div class="frame">
+    <svg viewBox="0 0 1000 250" role="img"
+         aria-label="Wire format of one telemetry packet: a 12-byte nonce, the ciphertext matching the plaintext length, and a 16-byte authentication tag, transmitted as hexadecimal JSON.">
+      <defs>
+        <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g>
+        <text x="20" y="34" font-size="12" font-weight="600" fill="var(--ink)">Plaintext, before sealing</text>
+        <rect x="20" y="46" width="420" height="40" rx="2" fill="var(--act-bg)" stroke="var(--act)" stroke-width="1.3"/>
+        <text x="36" y="71" font-size="12" font-family="IBM Plex Mono, monospace" fill="var(--ink)">
+          {"temperature": 31.12, "humidity": 58.67}</text>
+        <text x="452" y="71" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">41 bytes</text>
+      </g>
+
+      <g stroke="var(--crypto)" stroke-width="1.6" fill="none" color="var(--crypto)">
+        <line x1="230" y1="90" x2="230" y2="122" marker-end="url(#ar3)"/>
+      </g>
+      <text x="244" y="112" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--crypto)">
+        AES-256-GCM seal, fresh nonce</text>
+
+      <g>
+        <text x="20" y="150" font-size="12" font-weight="600" fill="var(--ink)">On the wire</text>
+        <rect x="20" y="162" width="120" height="44" rx="2" fill="var(--wire-bg)" stroke="var(--wire)" stroke-width="1.3"/>
+        <text x="80" y="182" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">nonce</text>
+        <text x="80" y="198" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">12 B</text>
+
+        <rect x="146" y="162" width="294" height="44" rx="2" fill="var(--wire-bg)" stroke="var(--wire)" stroke-width="1.3"/>
+        <text x="293" y="182" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">ciphertext</text>
+        <text x="293" y="198" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">41 B &mdash; same length as plaintext</text>
+
+        <rect x="446" y="162" width="150" height="44" rx="2" fill="var(--bad-bg)" stroke="var(--bad)" stroke-width="1.3"/>
+        <text x="521" y="182" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">auth tag</text>
+        <text x="521" y="198" text-anchor="middle" font-size="10.5" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">16 B</text>
+
+        <text x="612" y="188" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-3)">= 69 bytes</text>
+      </g>
+
+      <text x="20" y="232" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--ink-2)">
+        overhead 28 B/message &middot; nonce from hardware RNG, never reused &middot; tag checked before the relay moves</text>
+    </svg>
+  </div>
+  <figcaption><b>Encryption adds 28 bytes per reading and nothing else.</b> The
+    ciphertext is exactly the length of the plaintext; the fixed cost is the nonce and
+    the authentication tag. The nonce is drawn fresh for every message, so identical
+    readings never produce identical bytes and a captured packet cannot be replayed.</figcaption>
+</figure>
+
+<!-- ============================ FIGURE 4 ============================ -->
+<figure>
+  <div class="fignum">Figure 4</div>
+  <h2>Threat coverage by pipeline stage</h2>
+  <div class="frame" style="padding:4px 0">
+    <table>
+      <caption class="sr">Attacks mapped to the stage they target and the mechanism that answers them</caption>
+      <thead>
+        <tr><th>Attack</th><th>Stage targeted</th><th>Mechanism that answers it</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Shor's algorithm</td><td>Key establishment</td>
+            <td>ML-KEM-768 replaces RSA / ECDH; lattice problem, not factoring</td>
+            <td class="m" style="color:var(--bad)">breaks legacy channel</td></tr>
+        <tr><td>Lattice reduction (BKZ)</td><td>Key establishment</td>
+            <td>Category-3 parameters, &asymp;2<sup>181</sup> classical margin</td>
+            <td class="m" style="color:var(--act)">defended</td></tr>
+        <tr><td>Harvest now, decrypt later</td><td>Recorded traffic</td>
+            <td>Fresh keypair per connection, key zeroized on disconnect</td>
+            <td class="m" style="color:var(--act)">defended</td></tr>
+        <tr><td>Man-in-the-middle injection</td><td>Channel B</td>
+            <td>GCM tag verified before actuation</td>
+            <td class="m" style="color:var(--act)">defended</td></tr>
+        <tr><td>Grover's algorithm</td><td>Session keys</td>
+            <td>AES-256 retains a 2<sup>128</sup> margin under quantum search</td>
+            <td class="m" style="color:var(--act)">defended</td></tr>
+        <tr><td>Replay of a captured packet</td><td>Both channels</td>
+            <td>Nonce recorded per session key; duplicates refused</td>
+            <td class="m" style="color:var(--act)">defended</td></tr>
+        <tr><td>Device impersonation</td><td>Key establishment</td>
+            <td>ML-DSA-65 enrolled device signature</td>
+            <td class="m" style="color:var(--act)">defended</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figcaption><b>Shor's algorithm is the control, not a failure.</b> It is run against a
+    deliberately classical RSA channel to show what the project replaces &mdash; the modulus
+    is factored and the telemetry recovered &mdash; while the ML-KEM channels running
+    alongside are unaffected. Device impersonation is answered on the ML-DSA branch.</figcaption>
+</figure>
+
+</div>
