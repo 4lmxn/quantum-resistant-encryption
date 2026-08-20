@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 import random
+import sys
+import threading
 import time
 
 import socketio
@@ -12,6 +14,12 @@ from app.config import SERVER_URL, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY, TOPI
 from app.pqc import LINK_SENSOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
+
+# TT-101 process model. NORMAL_C sits comfortably below the 80 C default trip
+# setpoint, and an excursion climbs past it in about ten readings, which is a
+# demonstrable length of time rather than an instant jump.
+NORMAL_C = 68.0
+EXCURSION_RAMP_C = 2.5
 
 # Device credentials, provisioned out of band by `make enroll`. Without them the
 # node cannot prove who it is and the server will refuse the handshake.
@@ -29,6 +37,14 @@ class SimulatedSensorNode:
 
     def __init__(self):
         self.key_a = None
+        self.temperature = NORMAL_C
+        self.excursion = False
+
+    def toggle_excursion(self):
+        """Starts or stops the process upset. Stopping lets it settle back to
+        NORMAL_C so the plant can be reset and the demo run again."""
+        self.excursion = not self.excursion
+        return self.excursion
 
     def establish_session(self, encapsulation_key):
         """Encapsulates against the server's public key. Returns the KEM ciphertext."""
@@ -36,10 +52,26 @@ class SimulatedSensorNode:
         self.key_a = bytearray(session_key)
         return kem_ciphertext
 
-    def read_dht22_and_encrypt(self):
-        """Simulates physical sensor reading and encrypts via AES-256-GCM."""
+    def read_process_and_encrypt(self):
+        """Reads TT-101 and seals it with AES-256-GCM.
+
+        The old model returned a room temperature between 26 and 35 C, which was
+        fine for a thermostat and useless for a trip demo: the setpoint clamp
+        floor is 40 C, so no operator command could ever bring the two together
+        and the plant could never trip. This models the process instead -- a
+        vessel that idles near NORMAL_C and wanders a little, and, once an
+        excursion is started, climbs until something stops it.
+        """
+        if self.excursion:
+            self.temperature += EXCURSION_RAMP_C
+        else:
+            # Random walk with a pull back toward normal, so it drifts without
+            # wandering off on its own and tripping the plant unattended.
+            self.temperature += random.uniform(-1.2, 1.2)
+            self.temperature += (NORMAL_C - self.temperature) * 0.25
+
         telemetry = {
-            "temperature": round(random.uniform(26.0, 35.0), 2),
+            "temperature": round(self.temperature, 2),
             "humidity": round(random.uniform(40.0, 65.0), 2),
         }
         aesgcm = AESGCM(bytes(self.key_a))
@@ -66,10 +98,27 @@ sensor = SimulatedSensorNode()
 stream_generation = 0
 
 
+def watch_for_upset():
+    """ENTER in this terminal starts or stops a process upset.
+
+    Deliberately not a dashboard button or a new Socket.IO event: the trip has
+    to be demonstrable on cue, and reading this terminal's stdin needs no
+    protocol, no server handler, and nothing that could be confused with a real
+    control path into the safety function.
+    """
+    print("[SENSOR NODE] Press ENTER to start a process upset (ENTER again to stop).")
+    for _ in sys.stdin:
+        if sensor.toggle_excursion():
+            print(f"[SENSOR NODE] UPSET STARTED — climbing {EXCURSION_RAMP_C}°C "
+                  f"per reading from {sensor.temperature:.1f}°C.")
+        else:
+            print("[SENSOR NODE] Upset stopped. Settling back toward normal.")
+
+
 def stream_telemetry(generation):
     print("[SENSOR NODE] Streaming telemetry to Central Server...")
     while sio.connected and generation == stream_generation:
-        sio.emit("sensor_telemetry_event", sensor.read_dht22_and_encrypt())
+        sio.emit("sensor_telemetry_event", sensor.read_process_and_encrypt())
         sio.sleep(4)  # Non-blocking Socket.IO sleep to preserve ping/pong loop
 
 
@@ -146,6 +195,10 @@ def on_established(data):
              else "ML-KEM-768 -> SHAKE-256 -> HKDF-SHA256."))
     stream_generation += 1
     sio.start_background_task(stream_telemetry, stream_generation)
+    # A plain thread, not a Socket.IO background task: this one blocks on stdin,
+    # which would stall the event loop and drop the connection.
+    if stream_generation == 1 and sys.stdin.isatty():
+        threading.Thread(target=watch_for_upset, daemon=True).start()
 
 
 @sio.on("disconnect")
@@ -195,7 +248,7 @@ def run_sensor_node_mqtt():
         while True:
             if established["ready"]:
                 link.publish(
-                    f"{TOPIC_TELEMETRY}/{node_id}", sensor.read_dht22_and_encrypt()
+                    f"{TOPIC_TELEMETRY}/{node_id}", sensor.read_process_and_encrypt()
                 )
             time.sleep(4)
     except KeyboardInterrupt:

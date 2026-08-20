@@ -9,7 +9,17 @@ from flask_socketio import SocketIO, emit
 
 from app.attacks import attacks
 from app import identity, legacy
-from app.config import DEVICE_PSK, SERVER_HOST, SERVER_PORT, TEMP_THRESHOLD
+from app.config import (
+    DEVICE_PSK,
+    HEARTBEAT_PERIOD_S,
+    OPERATOR_MAX_SKEW_S,
+    SERVER_HOST,
+    SERVER_PORT,
+    SETPOINT_MAX_C,
+    SETPOINT_MAX_STEP_C,
+    SETPOINT_MIN_C,
+    TRIP_SETPOINT_C,
+)
 from app.pqc import (
     ENCAPSULATION_KEY_BYTES,
     KEM_CIPHERTEXT_BYTES,
@@ -29,14 +39,20 @@ class CentralServer:
     """Holds one ML-KEM session per connected node, keyed by Socket.IO sid."""
 
     def __init__(self):
-        self.temp_threshold = TEMP_THRESHOLD
-        # A thermostat has two edges, not one. Without the lower edge the fan
-        # latches on at the first warm reading and never comes back off.
-        self.relay_hysteresis = 1.0
-        self.desired_relay = "OFF"
-        # Manual control has to suspend the thermostat. Without this the next
-        # reading above the limit immediately undoes whatever the operator did.
-        self.manual_mode = False
+        self.trip_setpoint = TRIP_SETPOINT_C
+        # A safety trip latches. Falling back below the setpoint does not clear
+        # it -- an operator has to look at the plant and reset it deliberately.
+        # That is also why the thermostat's hysteresis band is gone: a latch
+        # cannot chatter, so the lower edge it needed has nothing left to do.
+        self.trip_state = "HEALTHY"
+        # Maintenance bypass. An operator-authenticated state now, not a
+        # dashboard toggle anyone could reach.
+        self.bypass = False
+        # Dead-man heartbeat sequence on the safety link.
+        self.heartbeat_seq = 0
+        # Operator command nonces, so a captured signed instruction is
+        # single-use and cannot be delivered a second time during an upset.
+        self.operator_nonces = set()
         self.findings = {}  # attack id -> last structured result
         # What a passive interceptor would hold for the legacy RSA channel:
         # the public key, the wrapped session key, and one captured packet.
@@ -112,14 +128,18 @@ class CentralServer:
         ciphertext = bytes.fromhex(packet["ciphertext"])
         return json.loads(aesgcm.decrypt(nonce, ciphertext, None).decode())
 
-    def encrypt_actuator_command(self, session_key, command_str):
-        """Encrypts a command with one actuator's negotiated session key."""
+    def encrypt_actuator_command(self, session_key, command_str, seq=None):
+        """Encrypts a command with one actuator's negotiated session key.
+
+        Heartbeats carry a sequence number so the actuator can tell a fresh beat
+        from one it has already counted; commands carry none.
+        """
         aesgcm = AESGCM(session_key)
         nonce = os.urandom(12)
-        payload = json.dumps(
-            {"command": command_str, "timestamp": time.time()}
-        ).encode()
-        ciphertext = aesgcm.encrypt(nonce, payload, None)
+        body = {"command": command_str, "timestamp": time.time()}
+        if seq is not None:
+            body["seq"] = seq
+        ciphertext = aesgcm.encrypt(nonce, json.dumps(body).encode(), None)
         return {"nonce": nonce.hex(), "ciphertext": ciphertext.hex()}
 
 
@@ -130,6 +150,20 @@ server_engine = CentralServer()
 registry = identity.IdentityRegistry()
 AUTHENTICATED = registry.server_public is not None
 mqtt_bridge = None  # set by --mqtt at startup
+_heartbeat_started = False
+
+
+def ensure_heartbeat_running():
+    """Starts the dead-man heartbeat once, on the first actuator handshake.
+
+    Starting it here rather than at import time means it never runs before there
+    is a session to seal it with, and never gets started twice by a reconnect.
+    """
+    global _heartbeat_started
+    if _heartbeat_started:
+        return
+    _heartbeat_started = True
+    socketio.start_background_task(heartbeat_loop)
 
 
 def log(log_type, msg):
@@ -160,13 +194,20 @@ def broadcast_pqc_status():
     socketio.emit("pqc_status", {"sessions": list(server_engine.sessions.values())})
 
 
-def process_telemetry(data, source, packet=None):
-    """Shared decision logic for both the Socket.IO nodes and the ESP32 HTTP leg.
+def process_telemetry(data, source, packet=None, safety_relevant=True):
+    """Shared handling for the Socket.IO nodes and the ESP32 HTTP leg.
 
-    The relay decision runs first so the reading and the resulting state are
+    `safety_relevant` is the whole point of the split. The ESP32 runs on a
+    provisioned pre-shared key, not the ML-KEM handshake, so it is the basic
+    process control transmitter and its readings are displayed but never allowed
+    to move the safety function. Only telemetry from a node that completed an
+    authenticated handshake can trip the plant.
+
+    The trip decision runs first so the reading and the resulting state are
     reported together; reporting first would always show the previous state.
     """
-    decide_relay(data["temperature"])
+    if safety_relevant:
+        decide_trip(data["temperature"])
 
     # The raw packet goes to the dashboard too, so it can show side by side what
     # an eavesdropper captures against what the key holder recovers.
@@ -183,53 +224,95 @@ def process_telemetry(data, source, packet=None):
         {
             "temp": data["temperature"],
             "humidity": data["humidity"],
-            "status": "SECURE_ML_KEM_768",
+            # Never label the BPCS leg with the KEM it does not use. That leg is
+            # sealed with the provisioned DEVICE_PSK, and saying otherwise on the
+            # dashboard would quietly undo the whole point of splitting the lanes.
+            "status": "SECURE_ML_KEM_768" if safety_relevant else "SECURE_DEVICE_PSK",
             "source": source,
-            # A dashboard that opens mid-run must not show a stale limit,
+            # A dashboard that opens mid-run must not show a stale setpoint,
             # and must never have to infer state by parsing log messages.
-            "threshold": server_engine.temp_threshold,
-            "relay": server_engine.desired_relay,
-            "manual": server_engine.manual_mode,
-            "too_hot": data["temperature"] > server_engine.temp_threshold,
+            "setpoint": server_engine.trip_setpoint,
+            "trip_state": server_engine.trip_state,
+            "valve": valve_position(),
+            "bypass": server_engine.bypass,
+            "over_setpoint": data["temperature"] >= server_engine.trip_setpoint,
+            "safety_relevant": safety_relevant,
             "wire": wire,
         },
     )
+    lane = "SAFETY" if safety_relevant else "BPCS"
     log(
         "SUCCESS",
-        f"[SERVER] Decrypted telemetry from {source} "
-        f"(AES-256-GCM, key from ML-KEM-768): {data['temperature']}°C",
+        f"[SERVER/{lane}] Decrypted telemetry from {source} "
+        f"(AES-256-GCM): {data['temperature']}°C",
     )
 
 
 
-def decide_relay(temperature):
-    """Edge-triggered: only speak when the decision actually changes.
+def valve_position():
+    """XV-101 as the actuator holds it. CLOSED is the safe state."""
+    return "CLOSED" if server_engine.trip_state == "TRIPPED" else "OPEN"
 
-    Turns on above the limit and back off a degree below it, so a reading
-    hovering on the boundary cannot make the relay chatter.
+
+def decide_trip(temperature):
+    """Latching trip. Speaks only on the edge into TRIPPED.
+
+    A thermostat has two edges; a safety function has one. Once the process
+    variable reaches the setpoint the trip latches and stays latched, because
+    the plant cooling back down is not evidence that whatever caused the
+    excursion has been dealt with. Clearing it is an operator decision, made
+    through a signed RESET.
     """
-    if server_engine.manual_mode:
-        return  # an operator is driving; the thermostat stays quiet
+    if server_engine.bypass:
+        return  # maintenance bypass asserted; logged when it was asserted
 
-    on_at = server_engine.temp_threshold
-    off_at = server_engine.temp_threshold - server_engine.relay_hysteresis
+    if temperature < server_engine.trip_setpoint:
+        return
+    if server_engine.trip_state == "TRIPPED":
+        return  # already latched, nothing to say
 
-    if temperature > on_at and server_engine.desired_relay == "OFF":
-        wanted = "ON"
-    elif temperature < off_at and server_engine.desired_relay == "ON":
-        wanted = "OFF"
-    else:
-        return  # no change, so no command and no log line
+    server_engine.trip_state = "TRIPPED"
+    log("ALERT", f"[SIS] {temperature}°C reached setpoint "
+                 f"{server_engine.trip_setpoint}°C. TRIP latched, closing XV-101.")
 
     if not server_engine.actuator_keys:
-        log("ERROR", "[SERVER] No actuator has completed a handshake. Command dropped.")
-        return
+        # Still worth stating plainly: the latch is set on the server, but no
+        # final element is listening, so nothing physical has actually moved.
+        log("ERROR", "[SIS] No actuator holds a session. The trip command could "
+                     "not be delivered — the heartbeat watchdog is the backstop.")
+    else:
+        send_actuator_command("TRIP")
+    socketio.emit("update_actuator_ui", {"valve": valve_position()})
 
-    server_engine.desired_relay = wanted
-    edge = f"rose above {on_at}°C" if wanted == "ON" else f"fell below {off_at}°C"
-    log("ALERT", f"[SERVER] {temperature}°C {edge}. Sending sealed FAN_{wanted}.")
-    send_actuator_command(f"FAN_{wanted}")
-    socketio.emit("update_actuator_ui", {"relay": wanted})
+
+def clear_trip(operator_id):
+    """Operator reset. Only reachable from a verified operator_command."""
+    if server_engine.trip_state != "TRIPPED":
+        log("ALERT", f"[SIS] RESET from {operator_id} ignored: not tripped.")
+        return
+    server_engine.trip_state = "HEALTHY"
+    log("SUCCESS", f"[SIS] Trip reset by {operator_id}. Reopening XV-101.")
+    send_actuator_command("RESET")
+    socketio.emit("update_actuator_ui", {"valve": valve_position()})
+
+
+def heartbeat_loop():
+    """Sealed heartbeat to every actuator, forever.
+
+    This is the fail-safe direction. The actuator trips when these stop, so
+    severing the link closes the valve instead of freezing it open. Losing the
+    network must never be a way to disable the safety function.
+    """
+    while True:
+        socketio.sleep(HEARTBEAT_PERIOD_S)
+        if not server_engine.actuator_keys:
+            continue
+        server_engine.heartbeat_seq += 1
+        for actuator_sid, actuator_key in list(server_engine.actuator_keys.items()):
+            packet = server_engine.encrypt_actuator_command(
+                actuator_key, "HEARTBEAT", seq=server_engine.heartbeat_seq
+            )
+            socketio.emit("sis_heartbeat", packet, to=actuator_sid)
 
 
 def send_actuator_command(command_str):
@@ -266,8 +349,14 @@ def index():
 
 @app.post("/telemetry")
 def http_telemetry():
-    """Constrained-device leg. The ESP32 posts an AES-256-GCM packet sealed with
-    its provisioned key, because it cannot run the ML-KEM handshake itself."""
+    """Basic process control transmitter — the ESP32 leg.
+
+    The board posts an AES-256-GCM packet sealed with its provisioned key,
+    because it cannot run the ML-KEM handshake itself. That weaker key is
+    exactly why this leg is not on the safety path: it reports, it is displayed,
+    and it cannot trip the plant. The safety function listens only to nodes that
+    proved who they were with ML-DSA-65.
+    """
     packet = request.get_json(force=True, silent=True) or {}
     try:
         data = server_engine.decrypt_sensor_data(DEVICE_PSK, packet)
@@ -278,8 +367,13 @@ def http_telemetry():
     if not server_engine.accept_nonce("device-psk", packet.get("nonce", "")):
         log("ERROR", "[SERVER] REPLAY BLOCKED: this ESP32 packet was already accepted.")
         return {"status": "replay"}, 409
-    process_telemetry(data, "ESP32 node", packet)
-    return {"status": "accepted", "threshold": server_engine.temp_threshold}
+    process_telemetry(data, "ESP32 node (BPCS)", packet, safety_relevant=False)
+    return {
+        "status": "accepted",
+        "setpoint": server_engine.trip_setpoint,
+        "trip_state": server_engine.trip_state,
+        "valve": valve_position(),
+    }
 
 
 @socketio.on("legacy_hello")
@@ -385,6 +479,8 @@ def handle_pqc_encapsulation(data):
         server_engine.forget(request.sid)
         log("ERROR", f"[PQC] Handshake failed ({type(exc).__name__}).")
         return
+    if role == "actuator":
+        ensure_heartbeat_running()
     record = server_engine.sessions[request.sid]
     if record["agreed"]:
         log("SUCCESS", f"[PQC] {role.upper()} session key established via ML-KEM-768 + HKDF-SHA256.")
@@ -429,10 +525,15 @@ def handle_relay_log(data):
 def handle_relay_actuator_ui(data):
     """The actuator confirms what it did. The server already emitted the
     intended state, so this only corrects a genuine disagreement."""
-    if data.get("relay") != server_engine.desired_relay:
-        log("ERROR", f"[SERVER] Actuator reports {data.get('relay')}, expected "
-                     f"{server_engine.desired_relay}.")
-        socketio.emit("update_actuator_ui", data)
+    reported = data.get("valve")
+    if reported != valve_position():
+        # A disagreement here is real news: the actuator's own watchdog may have
+        # tripped locally because our heartbeat stopped reaching it.
+        log("ALERT", f"[SIS] Actuator reports XV-101 {reported}, server expected "
+                     f"{valve_position()}. Trusting the actuator.")
+        if reported == "CLOSED":
+            server_engine.trip_state = "TRIPPED"
+        socketio.emit("update_actuator_ui", {"valve": reported})
 
 
 @socketio.on("mitm_inject")
@@ -460,34 +561,138 @@ def handle_trigger_attack(data):
 
 @socketio.on("toggle_actuator_override")
 def handle_toggle_actuator_override():
-    """Manual relay override from the dashboard. Sent as a properly sealed
-    command, so the actuator authenticates it exactly like an automatic one."""
-    if not server_engine.actuator_keys:
-        log("ERROR", "[SERVER] Override ignored: no actuator has completed a handshake.")
-        return
-    server_engine.manual_mode = True
-    server_engine.desired_relay = "OFF" if server_engine.desired_relay == "ON" else "ON"
-    log("ALERT", f"[SERVER] Manual control: sending sealed FAN_{server_engine.desired_relay}. "
-                 f"The thermostat is paused.")
-    send_actuator_command(f"FAN_{server_engine.desired_relay}")
-    socketio.emit("update_actuator_ui", {"relay": server_engine.desired_relay})
+    """Kept, and now always refused.
 
-
-@socketio.on("resume_automatic")
-def handle_resume_automatic():
-    """Hands control back to the thermostat, which re-decides on the next reading."""
-    server_engine.manual_mode = False
-    log("ALERT", "[SERVER] Back to automatic. The thermostat decides again.")
+    This used to flip the final element on an unauthenticated dashboard message.
+    The command it emitted was properly sealed, so the actuator authenticated it
+    correctly and obeyed -- which proved the server had sent it, and nothing
+    about who had asked. It stays here, refusing, so the demonstration can show
+    the unsigned path being turned away beside the signed one working.
+    """
+    log("ERROR", "[SIS] Refused: unsigned override from the dashboard. "
+                 "Safety actions need a signed operator command — run: make operator")
 
 
 @socketio.on("set_threshold")
 def handle_set_threshold(data):
-    try:
-        server_engine.temp_threshold = float(data["threshold"])
-    except (KeyError, TypeError, ValueError):
-        log("ERROR", "[SERVER] Rejected malformed threshold from dashboard.")
+    """Kept, and now always refused. See handle_toggle_actuator_override."""
+    log("ERROR", "[SIS] Refused: unsigned setpoint change from the dashboard. "
+                 "This is the Oldsmar path — a legitimate control channel with "
+                 "nobody proving who used it.")
+
+
+@socketio.on("resume_automatic")
+def handle_resume_automatic():
+    """Kept, and now always refused: clearing a bypass is an operator action."""
+    log("ERROR", "[SIS] Refused: unsigned bypass change from the dashboard.")
+
+
+OPERATOR_ACTIONS = ("SET_SETPOINT", "RESET", "BYPASS_ON", "BYPASS_OFF")
+
+
+def _reject_operator(reason):
+    log("ERROR", f"[SIS] Operator command REFUSED: {reason}")
+
+
+@socketio.on("operator_command")
+def handle_operator_command(data):
+    """A control action carrying an ML-DSA-65 signature over everything that
+    changes its meaning.
+
+    Authentication alone is not the lesson from Oldsmar -- that intruder used a
+    legitimate remote-access path. So a verified signature is necessary here but
+    not sufficient: the value is still clamped, and the size of a single step is
+    still limited. A correctly signed command asking to move the trip setpoint
+    by sixty degrees is refused exactly like an unsigned one.
+    """
+    if not AUTHENTICATED:
+        _reject_operator("no identities enrolled on this server — run: make enroll")
         return
-    log("ALERT", f"[SERVER] Threshold set to {server_engine.temp_threshold}°C by operator.")
+
+    operator_id = str(data.get("operator_id", ""))
+    action = str(data.get("action", ""))
+    value = data.get("value")
+    nonce_hex = str(data.get("nonce", ""))
+    timestamp = data.get("timestamp")
+
+    if action not in OPERATOR_ACTIONS:
+        _reject_operator(f"unknown action {action!r}")
+        return
+    if not registry.is_enrolled(operator_id):
+        _reject_operator(f"{operator_id or '<none>'} is not enrolled")
+        return
+    try:
+        skew = abs(time.time() - float(timestamp))
+    except (TypeError, ValueError):
+        _reject_operator("malformed timestamp")
+        return
+    if skew > OPERATOR_MAX_SKEW_S:
+        _reject_operator(f"stale by {skew:.0f}s — a captured command cannot be replayed later")
+        return
+    if not nonce_hex or nonce_hex in server_engine.operator_nonces:
+        _reject_operator("nonce missing or already used")
+        return
+
+    transcript = identity.operator_transcript(operator_id, action, value, nonce_hex, timestamp)
+    signature = bytes.fromhex(str(data.get("signature", "") or ""))
+    if not identity.verify(registry.public_key_of(operator_id), transcript, signature):
+        _reject_operator(f"bad ML-DSA signature for {operator_id}")
+        return
+
+    # Burn the nonce only once the signature checks out, so an attacker cannot
+    # spend a legitimate operator's nonce by sending garbage that carries it.
+    server_engine.operator_nonces.add(nonce_hex)
+    _apply_operator_action(operator_id, action, value)
+
+
+def _apply_operator_action(operator_id, action, value):
+    """Runs a command whose signature has already been verified."""
+    if action == "RESET":
+        clear_trip(operator_id)
+    elif action == "BYPASS_ON":
+        server_engine.bypass = True
+        log("ALERT", f"[SIS] Maintenance bypass ASSERTED by {operator_id}. "
+                     f"The trip function is suspended.")
+    elif action == "BYPASS_OFF":
+        server_engine.bypass = False
+        log("SUCCESS", f"[SIS] Maintenance bypass cleared by {operator_id}.")
+    elif action == "SET_SETPOINT":
+        _apply_setpoint(operator_id, value)
+    broadcast_sis_state()
+
+
+def _apply_setpoint(operator_id, value):
+    try:
+        wanted = float(value)
+    except (TypeError, ValueError):
+        _reject_operator("setpoint is not a number")
+        return
+    if not SETPOINT_MIN_C <= wanted <= SETPOINT_MAX_C:
+        _reject_operator(f"setpoint {wanted}°C outside the safe range "
+                         f"{SETPOINT_MIN_C}–{SETPOINT_MAX_C}°C")
+        return
+    step = abs(wanted - server_engine.trip_setpoint)
+    if step > SETPOINT_MAX_STEP_C:
+        _reject_operator(f"step of {step:.1f}°C exceeds the {SETPOINT_MAX_STEP_C}°C "
+                         f"limit on a single change")
+        return
+    previous = server_engine.trip_setpoint
+    server_engine.trip_setpoint = wanted
+    log("SUCCESS", f"[SIS] Trip setpoint {previous}°C → {wanted}°C, "
+                   f"signed by {operator_id} (ML-DSA-65).")
+
+
+def broadcast_sis_state():
+    """Pushes setpoint, latch and bypass to the dashboard after any change."""
+    socketio.emit("sis_state", {
+        "setpoint": server_engine.trip_setpoint,
+        "trip_state": server_engine.trip_state,
+        "valve": valve_position(),
+        "bypass": server_engine.bypass,
+        "setpoint_min": SETPOINT_MIN_C,
+        "setpoint_max": SETPOINT_MAX_C,
+        "max_step": SETPOINT_MAX_STEP_C,
+    })
 
 
 @socketio.on("dashboard_ready")
@@ -495,6 +700,7 @@ def handle_dashboard_ready():
     """A dashboard that connects mid-run still needs the current state."""
     broadcast_pqc_status()
     broadcast_findings()
+    broadcast_sis_state()
 
 
 @socketio.on("disconnect")

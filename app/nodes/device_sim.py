@@ -44,7 +44,10 @@ def run(forge, interval):
     print("[DEVICE] Ctrl-C to stop.\n")
 
     while True:
-        temperature = round(random.uniform(26.0, 35.0), 2)
+        # Same process range as the safety transmitter, so the dashboard shows
+        # two plausible readings of the same plant and the only thing telling
+        # them apart is which lane they arrived on.
+        temperature = round(random.uniform(64.0, 72.0), 2)
         humidity = round(random.uniform(40.0, 65.0), 2)
         packet = forge_reading() if forge else seal_reading(temperature, humidity)
 
@@ -57,7 +60,8 @@ def run(forge, interval):
 
         if response.status_code == 200:
             print(f"[DEVICE] {temperature}°C / {humidity}% -> accepted "
-                  f"(threshold {response.json().get('threshold')}°C)")
+                  f"(setpoint {response.json().get('setpoint')}°C, "
+                  f"plant {response.json().get('trip_state')})")
         else:
             print(f"[DEVICE] Rejected, HTTP {response.status_code} — "
                   f"the GCM tag did not verify.")

@@ -143,6 +143,33 @@ td.k{color:var(--key)}td.ok{color:var(--ok)}td.no{color:var(--bad);font-weight:6
 .gap b{font-size:.86em;color:var(--warn);display:block}
 .gap span{font-size:.79em;color:var(--muted)}
 
+/* lane: safety-rated telemetry vs basic process control. The hazard stripe is
+   the point -- a BPCS number must never be mistaken for a safety one. */
+.lane{font-size:.7em;font-weight:700;letter-spacing:.06em;padding:.18em .5em;
+  border-radius:4px;white-space:nowrap}
+.lane.safety{background:rgba(74,222,128,.16);color:var(--ok)}
+.lane.bpcs{background:rgba(251,191,36,.2);color:var(--warn)}
+.node.bpcs{border-color:var(--warn);border-style:dashed;
+  background:repeating-linear-gradient(135deg,var(--panel) 0 9px,rgba(251,191,36,.07) 9px 18px)}
+.node.tripped{border-color:var(--bad);background:rgba(248,113,113,.08)}
+.big.bad{color:var(--bad)}
+
+/* SIS status panel */
+.sis{display:grid;grid-template-columns:1fr 1fr;gap:.35em .8em;margin-top:.15em}
+.sis .lbl{font-size:.68em;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--faint);font-weight:600}
+.val{font-size:1.15em;font-weight:700;letter-spacing:-.01em}
+.val.ok{color:var(--ok)}.val.bad{color:var(--bad)}
+.val.warn{color:var(--warn)}.val.off{color:var(--faint)}
+
+/* the unsigned legacy path, kept so it can be seen being refused */
+.unsigned{border:1px dashed rgba(248,113,113,.5);border-radius:5px;
+  padding:.4em .5em;margin-top:.35em;background:rgba(248,113,113,.05)}
+.unsigned .tagline{font-size:.67em;font-weight:700;letter-spacing:.05em;
+  color:var(--bad);display:block;margin-bottom:.3em}
+.unsigned input[type=range]{accent-color:var(--bad)}
+code{font-family:'IBM Plex Mono',monospace;font-size:.92em;color:var(--info)}
+
 /* controls */
 .row{display:flex;gap:.4em}
 .btn{flex:1;padding:.45em .6em;border-radius:5px;border:1px solid var(--line-2);
@@ -169,7 +196,7 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
 
   <div class="bar">
     <h1>Post-Quantum Secure Communication for IoT</h1>
-    <span class="sub">CRYSTALS-Kyber ML-KEM-768 · FIPS 203 · AES-256-GCM</span>
+    <span class="sub">SIS-01 emergency shutdown · ML-KEM-768 · ML-DSA-65 · AES-256-GCM</span>
     <span class="grow"></span>
     <span class="chip" id="conn" role="status" aria-live="polite">
       <span class="dot" aria-hidden="true"></span><span id="conn-text">Connecting</span></span>
@@ -177,39 +204,62 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
 
   <!-- pipeline: sensor -> server -> actuator, with the live link between them -->
   <section class="pipe" aria-label="Signal pipeline">
-    <article class="node">
-      <div class="top"><span class="name">Sensor node</span><span class="keytag">Key A</span></div>
+    <article class="node" id="src-card">
+      <div class="top"><span class="name" id="src-name">Process transmitter</span>
+        <span class="lane safety" id="lane">SAFETY</span></div>
       <div class="big warn mono" id="temp" role="status" aria-live="polite" aria-label="Temperature">—— °C</div>
       <div class="meta" id="humidity">Awaiting telemetry</div>
-      <div class="fine" id="fp-sensor">Key exchange pending</div>
+      <div class="fine" id="lane-note">Awaiting the first reading</div>
+      <div class="fine" id="fp-sensor">Safety sensor: key exchange pending</div>
     </article>
 
     <div class="link" id="link-in"><span class="tag">AES-256-GCM</span>
       <div class="track" aria-hidden="true"></div><span class="tag">Key A</span></div>
 
-    <article class="node">
-      <div class="top"><span class="name">Central server</span>
-        <span class="keytag" id="decision" role="status" aria-live="polite">STANDBY</span></div>
-      <div class="meta" style="display:flex;justify-content:space-between">
-        <label for="limit">Trigger threshold</label><b class="mono" id="limit-label">30.0 °C</b></div>
-      <input id="limit" type="range" min="20" max="45" step="0.5" value="30"
-             aria-valuemin="20" aria-valuemax="45" aria-valuenow="30" aria-valuetext="30.0 degrees Celsius"
-             oninput="setLimit(this.value)">
-      <div class="fine">Engages above threshold, releases 1.0 °C below</div>
+    <article class="node" id="sis-card">
+      <div class="top"><span class="name">SIS-01 safety function</span>
+        <span class="keytag">Server view</span></div>
+      <div class="sis">
+        <div><div class="lbl">Trip state</div>
+          <div class="val ok" id="trip-state" role="status" aria-live="polite">HEALTHY</div></div>
+        <div><div class="lbl">XV-101</div>
+          <div class="val ok mono" id="valve-mini">OPEN</div></div>
+        <div><div class="lbl">Trip setpoint</div>
+          <div class="val mono" id="limit-label">80.0 °C</div></div>
+        <div><div class="lbl">Bypass</div>
+          <div class="val off" id="bypass">NOT ASSERTED</div></div>
+      </div>
+      <div class="fine" id="bounds">Bounds 40.0–120.0 °C · max single step 15.0 °C</div>
+      <div class="unsigned">
+        <span class="tagline">Legacy unsigned path — will be refused</span>
+        <div class="fine" style="display:flex;justify-content:space-between;gap:.5em">
+          <label for="limit">Setpoint request</label><b class="mono" id="limit-req">80.0 °C</b></div>
+        <input id="limit" type="range" min="40" max="120" step="0.5" value="80"
+               aria-valuemin="40" aria-valuemax="120" aria-valuenow="80"
+               aria-valuetext="80.0 degrees Celsius"
+               oninput="previewSetpoint(this.value)" onchange="requestSetpoint(this.value)">
+        <div class="fine">Signed path: <code>make operator ARGS="setpoint 85"</code></div>
+      </div>
     </article>
 
     <div class="link" id="link-out"><span class="tag">AES-256-GCM</span>
       <div class="track" aria-hidden="true"></div><span class="tag">Key B</span></div>
 
     <article class="node" id="act-card">
-      <div class="top"><span class="name">Actuator node</span><span class="keytag">Key B</span></div>
-      <div class="big off mono" id="relay" role="status" aria-live="polite">RELAY OFF</div>
-      <div class="row" id="main">
-        <button class="btn" onclick="flip()" title="Toggle the relay (keyboard: F)">Toggle relay<kbd aria-hidden="true">F</kbd></button>
-        <button class="btn" id="auto-btn" onclick="resume()" disabled
-                title="Return to automatic control (keyboard: A)">Automatic<kbd aria-hidden="true">A</kbd></button>
+      <div class="top"><span class="name">Final element · XV-101</span><span class="keytag">Key B</span></div>
+      <div class="big ok mono" id="valve" role="status" aria-live="polite">XV-101 OPEN</div>
+      <div class="unsigned" id="main">
+        <span class="tagline">Legacy unsigned path — will be refused</span>
+        <div class="row">
+          <button class="btn" onclick="flip()"
+                  title="Unsigned override — the server refuses this (keyboard: F)">Override XV-101<kbd aria-hidden="true">F</kbd></button>
+          <button class="btn" id="auto-btn" onclick="resume()"
+                  title="Unsigned bypass clear — the server refuses this (keyboard: A)">Clear bypass<kbd aria-hidden="true">A</kbd></button>
+        </div>
+        <div class="fine">Signed path: <code>make operator ARGS="reset"</code></div>
       </div>
-      <div class="fine" id="mode">Automatic control · GCM tag verified before actuation</div>
+      <div class="fine">CLOSED is the safe state · GCM tag verified before actuation ·
+        trips if the authenticated heartbeat stops</div>
     </article>
   </section>
 
@@ -302,9 +352,12 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
             work on embedded energy profiling suggests this dominates the security budget
             for duty-cycled sensors. Our figures do not capture it.</span></div>
 
-          <div class="gap"><b>No dashboard access control</b>
-            <span>Any client reaching this interface can alter the threshold and actuate
-            the relay. Acceptable on an isolated lab network only.</span></div>
+          <div class="gap"><b>The dashboard has no access control, and now no authority</b>
+            <span>Anyone reaching this interface can read it. The trip setpoint and XV-101
+            moved to a signed operator CLI, because a browser has nowhere safe to keep an
+            ML-DSA signing key. The slider and the override button below still emit their
+            old unsigned events and the server now refuses both — that refusal, visible in
+            the log, is the Oldsmar path being turned away.</span></div>
 
           <p class="fine" style="white-space:normal">Replay was on this list until tested
             for. Captured packets are now accepted exactly once per session key.</p>
@@ -409,22 +462,22 @@ function pulse(el, reject) {
 }
 
 socket.on('update_telemetry', d => {
-  $('temp').textContent = d.temp.toFixed(2) + ' °C';
+  // safety_relevant is the whole distinction: a BPCS reading is shown, never obeyed.
+  const safety = d.safety_relevant !== false;
+  $('src-card').classList.toggle('bpcs', !safety);
+  $('src-name').textContent = d.source || (safety ? 'Sensor node' : 'BPCS transmitter');
+  $('lane').className = 'lane ' + (safety ? 'safety' : 'bpcs');
+  $('lane').textContent = safety ? 'SAFETY' : 'BPCS — NOT SAFETY RATED';
+  $('lane-note').textContent = safety
+    ? 'Safety lane · ML-KEM-768 + ML-DSA-65 · this reading can trip SIS-01'
+    : 'BPCS lane · provisioned pre-shared key · displayed only, can never trip SIS-01';
+  // A BPCS reading stays grey even when it is over the setpoint, because it is
+  // not allowed to mean anything to the safety function.
+  $('temp').className = 'big mono ' + (!safety ? 'off' : (d.over_setpoint ? 'bad' : 'warn'));
+  $('temp').textContent = d.temp.toFixed(2) + ' °C' + (safety ? '' : '  (BPCS)');
   $('humidity').textContent = 'Relative humidity ' + d.humidity.toFixed(2) + ' %';
   pulse($('link-in'), false);
-  if (d.threshold !== undefined) {
-    const l = $('limit');
-    l.value = d.threshold;
-    l.setAttribute('aria-valuenow', d.threshold);
-    l.setAttribute('aria-valuetext', d.threshold.toFixed(1) + ' degrees Celsius');
-    $('limit-label').textContent = d.threshold.toFixed(1) + ' °C';
-  }
-  if (d.too_hot !== undefined) {
-    $('decision').textContent = d.too_hot ? 'ABOVE THRESHOLD' : 'NOMINAL';
-    $('decision').style.color = d.too_hot ? 'var(--warn)' : 'var(--ok)';
-  }
-  if (d.relay) setRelay(d.relay);
-  if (d.manual !== undefined) setMode(d.manual);
+  applySis(d);
   if (d.wire && d.wire.ciphertext) {
     $('cipher').textContent = d.wire.nonce + d.wire.ciphertext;
     $('plain').textContent = JSON.stringify({temperature:d.temp, humidity:d.humidity}, null, 2);
@@ -432,22 +485,61 @@ socket.on('update_telemetry', d => {
   }
 });
 
-function setRelay(s) {
-  const on = s === 'ON';
-  $('relay').className = 'big mono ' + (on ? 'info' : 'off');
-  $('relay').textContent = on ? 'RELAY ON' : 'RELAY OFF';
+/* One reader for every shape of SIS state: update_telemetry carries the same
+   four fields sis_state does, so neither can drift from the other. */
+function applySis(s) {
+  if (typeof s.setpoint === 'number') setSetpoint(s.setpoint);
+  if (typeof s.setpoint_min === 'number') setBounds(s);
+  if (s.trip_state) setTrip(s.trip_state);
+  if (s.valve) setValve(s.valve);
+  if (s.bypass !== undefined) setBypass(s.bypass);
 }
-function setMode(m) {
-  $('act-card').classList.toggle('alert', m);
-  $('mode').textContent = m ? 'Manual control · automatic regulation suspended'
-                            : 'Automatic control · GCM tag verified before actuation';
-  $('auto-btn').disabled = !m;
+
+function setSetpoint(v) {
+  const l = $('limit');
+  // Snapping the slider back to the real setpoint is deliberate: the dashboard
+  // reports the setpoint, it does not get to propose one.
+  l.value = v;
+  l.setAttribute('aria-valuenow', v);
+  l.setAttribute('aria-valuetext', v.toFixed(1) + ' degrees Celsius');
+  $('limit-label').textContent = v.toFixed(1) + ' °C';
+  $('limit-req').textContent = v.toFixed(1) + ' °C';
 }
-socket.on('update_actuator_ui', d => setRelay(d.relay));
+function setBounds(s) {
+  const l = $('limit');
+  l.min = s.setpoint_min; l.max = s.setpoint_max;
+  l.setAttribute('aria-valuemin', s.setpoint_min);
+  l.setAttribute('aria-valuemax', s.setpoint_max);
+  $('bounds').textContent = 'Bounds ' + s.setpoint_min.toFixed(1) + '–' +
+    s.setpoint_max.toFixed(1) + ' °C · max single step ' + s.max_step.toFixed(1) +
+    ' °C · signed operator command only';
+}
+function setTrip(t) {
+  const tripped = t === 'TRIPPED';
+  $('trip-state').className = 'val ' + (tripped ? 'bad' : 'ok');
+  $('trip-state').textContent = tripped ? 'TRIPPED (LATCHED)' : 'HEALTHY';
+  $('sis-card').classList.toggle('tripped', tripped);
+}
+function setValve(v) {
+  const closed = v === 'CLOSED';
+  $('valve').className = 'big mono ' + (closed ? 'bad' : 'ok');
+  $('valve').textContent = 'XV-101 ' + (closed ? 'CLOSED' : 'OPEN');
+  $('valve-mini').className = 'val mono ' + (closed ? 'bad' : 'ok');
+  $('valve-mini').textContent = closed ? 'CLOSED' : 'OPEN';
+  $('act-card').classList.toggle('tripped', closed);
+}
+function setBypass(b) {
+  $('bypass').className = 'val ' + (b ? 'warn' : 'off');
+  $('bypass').textContent = b ? 'ASSERTED' : 'NOT ASSERTED';
+  $('sis-card').classList.toggle('alert', b);
+}
+
+socket.on('sis_state', applySis);
+socket.on('update_actuator_ui', d => setValve(d.valve));
 
 socket.on('security_log', l => {
   const cls = {SUCCESS:'l-ok',ERROR:'l-bad',ALERT:'l-warn',ATTACK:'l-atk'}[l.type] || 'l-ok';
-  if (l.type === 'ALERT' && /Sending sealed|Manual control/.test(l.msg)) pulse($('link-out'), false);
+  if (/XV-101|TRIP latched|Trip reset/.test(l.msg)) pulse($('link-out'), false);
   if (/REJECTED|Tampering/.test(l.msg)) pulse($('link-out'), true);
   const log = $('log'), p = document.createElement('p');
   p.innerHTML = '<time></time><span class="' + cls + '"></span>';
@@ -467,17 +559,26 @@ socket.on('pqc_status', d => {
       <td class="${s.authenticated ? 'ok':'no'}">${s.authenticated ? 'ML-DSA-65':'NONE'}</td></tr>`).join('')
     : '<tr><td colspan="8" style="color:var(--faint)">No nodes connected</td></tr>';
   const sensor = rows.find(s => s.role === 'sensor');
+  // Always attributed to the safety sensor, so it can never be read as
+  // describing whatever BPCS source happens to be on the card right now.
   $('fp-sensor').textContent = sensor
-    ? 'ML-KEM-768 · session key ' + sensor.server_fingerprint : 'Key exchange pending';
+    ? 'Safety sensor: ML-KEM-768 · session key ' + sensor.server_fingerprint
+    : 'Safety sensor: key exchange pending';
 });
 
-function flip(){ socket.emit('toggle_actuator_override'); setMode(true); }
-function resume(){ socket.emit('resume_automatic'); setMode(false); }
-function setLimit(v){
+/* The three unsigned legacy controls. They still emit exactly what they always
+   emitted; the server refuses all three and says so in red. Nothing here updates
+   the panel, because nothing here changes the plant. */
+function flip(){ socket.emit('toggle_actuator_override'); }
+function resume(){ socket.emit('resume_automatic'); }
+function previewSetpoint(v){
   const l = $('limit');
   l.setAttribute('aria-valuenow', v);
   l.setAttribute('aria-valuetext', parseFloat(v).toFixed(1) + ' degrees Celsius');
-  $('limit-label').textContent = parseFloat(v).toFixed(1) + ' °C';
+  $('limit-req').textContent = parseFloat(v).toFixed(1) + ' °C';
+}
+function requestSetpoint(v){
+  previewSetpoint(v);
   socket.emit('set_threshold', {threshold: parseFloat(v)});
 }
 function tab(i){
@@ -501,7 +602,7 @@ document.addEventListener('keydown', e => {
   const n = ['1','2','3','4','5'].indexOf(e.key);
   if (n > -1) { run(ATTACKS[n].id); return; }
   if (e.key === 'f' || e.key === 'F') flip();
-  if ((e.key === 'a' || e.key === 'A') && !$('auto-btn').disabled) resume();
+  if (e.key === 'a' || e.key === 'A') resume();
 });
 </script>
 </body>

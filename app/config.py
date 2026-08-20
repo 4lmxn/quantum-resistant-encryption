@@ -15,7 +15,25 @@ import pathlib
 DEVICE_PSK = os.environ.get("DEVICE_PSK", "esp32_provisioned_aes256_key_32B").encode()
 assert len(DEVICE_PSK) == 32, "DEVICE_PSK must be exactly 32 bytes for AES-256"
 
-TEMP_THRESHOLD = 30.0
+# ---------------------------------------------------------------- safety ----
+# SIS-01: the trip setpoint for the emergency shutdown function. Crossing it
+# latches a trip; only an authenticated operator RESET clears it.
+TRIP_SETPOINT_C = 80.0
+
+# An operator may move the setpoint, but not anywhere. Oldsmar was a legitimate
+# control path used to make an illegitimate change, so the bound matters as much
+# as the authentication: a signed command that asks for 11,100 is still refused.
+SETPOINT_MIN_C = 40.0
+SETPOINT_MAX_C = 120.0
+SETPOINT_MAX_STEP_C = 15.0
+
+# How stale a signed operator command may be before the server refuses it.
+OPERATOR_MAX_SKEW_S = 30.0
+
+# Dead-man heartbeat on the safety link. The actuator trips when these stop, so
+# cutting the network closes the valve instead of freezing it open.
+HEARTBEAT_PERIOD_S = 2.0
+HEARTBEAT_TIMEOUT_S = 6.0
 
 # Port 5000 is occupied by AirPlay Receiver on macOS, hence 5001.
 SERVER_HOST = "0.0.0.0"

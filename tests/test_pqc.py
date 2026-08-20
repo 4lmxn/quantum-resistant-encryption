@@ -44,7 +44,7 @@ def test_tampered_ciphertext_is_rejected():
     server_key = decapsulate(decapsulation_key, kem_ciphertext, LINK_ACTUATOR)
 
     nonce = os.urandom(12)
-    sealed = bytearray(AESGCM(server_key).encrypt(nonce, b'{"command": "FAN_ON"}', None))
+    sealed = bytearray(AESGCM(server_key).encrypt(nonce, b'{"command": "TRIP"}', None))
     sealed[0] ^= 0xFF  # flip a bit, as the MITM stage does
 
     try:

@@ -3,7 +3,7 @@ PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
-        firmware firmware-setup sensor-legacy enroll bench
+        firmware firmware-setup sensor-legacy enroll bench operator
 
 help:
 	@echo "Setup:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make device         ESP32 stand-in (no hardware needed)"
 	@echo "  make sensor-legacy  classical RSA node — attack 1 breaks this one"
 	@echo "  make attack         run the full attack sequence"
+	@echo '  make operator ARGS="setpoint 85"   signed operator command'
 	@echo ""
 	@echo "MQTT over TLS 1.3 instead of WebSocket:"
 	@echo "  make broker         then server-mqtt / sensor-mqtt / actuator-mqtt"
@@ -34,6 +35,10 @@ enroll:             ## create server + device ML-DSA identities (once)
 
 bench:              ## measure what the post-quantum primitives cost
 	$(PY) bench.py
+
+operator:           ## signed operator console — the only way to move the setpoint
+	@echo 'usage: make operator ARGS="setpoint 85" | ARGS=reset | ARGS="bypass on"'
+	$(PY) -m app.nodes.operator $(ARGS)
 
 certs:
 	./scripts/make_certs.sh
@@ -70,8 +75,10 @@ actuator-mqtt:
 
 test:
 	$(PY) -m tests.test_pqc
-	$(PY) -m tests.test_thermostat
+	$(PY) -m tests.test_trip_logic
 	$(PY) -m tests.test_identity
+	$(PY) -m tests.test_operator_auth
+	$(PY) -m tests.test_heartbeat
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:
@@ -79,6 +86,7 @@ test-device:
 
 firmware:           ## compile the ESP32 sketch (needs arduino-cli + esp32 core)
 	arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all firmware/sketch
+	@echo "Built. Simulate locally: open firmware/wokwi.toml, F1 -> Wokwi: Start Simulator"
 
 firmware-setup:     ## one-time toolchain install for the firmware target
 	brew install arduino-cli
@@ -87,6 +95,8 @@ firmware-setup:     ## one-time toolchain install for the firmware target
 	  https://espressif.github.io/arduino-esp32/package_esp32_index.json
 	arduino-cli core update-index
 	arduino-cli core install esp32:esp32
+	arduino-cli lib install "MAX6675"
+	arduino-cli lib install "DHT sensor library for ESPx"
 
 clean:
 	find . -path ./.venv -prune -o -name __pycache__ -type d -print0 | xargs -0 rm -rf

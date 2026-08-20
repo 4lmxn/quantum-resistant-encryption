@@ -59,6 +59,24 @@ def handshake_transcript(role, encapsulation_key, kem_ciphertext=b""):
     return b"|".join([b"quantum-iot/v1", role.encode(), encapsulation_key, kem_ciphertext])
 
 
+def operator_transcript(operator_id, action, value, nonce_hex, timestamp):
+    """The bytes an operator signs for one control action.
+
+    Every field that changes the meaning of the command is inside the signature.
+    The nonce makes a captured command single-use, and the timestamp bounds how
+    long a captured-but-unused one stays valid, so an operator instruction cannot
+    be recorded during commissioning and delivered during an upset.
+    """
+    return b"|".join([
+        b"quantum-iot/operator/v1",
+        operator_id.encode(),
+        action.encode(),
+        repr(value).encode(),
+        nonce_hex.encode(),
+        str(int(timestamp)).encode(),
+    ])
+
+
 class IdentityRegistry:
     """Enrolled device public keys, plus the server's own keypair.
 
@@ -96,6 +114,21 @@ class IdentityRegistry:
         are handed to the devices once and never stored here.
         """
         self.server_public, self.server_secret = generate_identity()
+        secrets = {}
+        for device_id in device_ids:
+            public, secret = generate_identity()
+            self.devices[device_id] = public
+            secrets[device_id] = secret
+        self.save()
+        return secrets
+
+    def enrol_additional(self, device_ids):
+        """Adds identities without disturbing the server key or existing devices.
+
+        bootstrap() replaces everything, which is correct the first time and
+        destructive every time after. Enrolling a new operator is a routine act;
+        it must not invalidate the devices already in the field.
+        """
         secrets = {}
         for device_id in device_ids:
             public, secret = generate_identity()

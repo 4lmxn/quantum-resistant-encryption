@@ -1,0 +1,16 @@
+# Local simulation for the Wokwi VS Code extension.
+#
+# This is the fast path. `arduino-cli` builds on your machine with a warm
+# object cache, so a one-line edit rebuilds in seconds instead of queueing a
+# full cold compile on Wokwi's servers every single time.
+#
+#   make firmware        # produces build/sketch.ino.bin + .elf
+#   then F1 -> "Wokwi: Start Simulator"
+
+[wokwi]
+version = 1
+# arduino-cli's own build directory. Pointing straight at it rather than
+# copying the artifacts elsewhere keeps one 31 MB tree instead of two, and the
+# warm object cache in it is what makes a rebuild ~18s instead of ~33s.
+firmware = "sketch/build/esp32.esp32.esp32/sketch.ino.bin"
+elf = "sketch/build/esp32.esp32.esp32/sketch.ino.elf"

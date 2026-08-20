@@ -3,6 +3,7 @@ flask>=3
 flask-socketio>=5.3
 python-socketio[client]>=5.11
 kyber-py>=1.2
+dilithium-py>=1.1
 requests>=2.31
 
 # MQTT over TLS 1.3 transport (report §3.1)

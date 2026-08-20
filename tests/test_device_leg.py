@@ -20,8 +20,13 @@ def seal_like_esp32(temperature, humidity):
 def test_server_accepts_device_packet():
     response = requests.post(f"{SERVER_URL}/telemetry", json=seal_like_esp32(33.5, 55.0))
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == "accepted"
-    assert "threshold" in response.json(), "node needs the threshold to drive its relay"
+    body = response.json()
+    assert body["status"] == "accepted"
+    # The BPCS leg is told the safety state; it does not get to change it.
+    assert body["trip_state"] in ("HEALTHY", "TRIPPED"), body
+    assert body["valve"] in ("OPEN", "CLOSED"), body
+    assert isinstance(body["setpoint"], (int, float)), body
+    assert "threshold" not in body, "the thermostat threshold is gone from this response"
 
 
 def test_server_rejects_forged_device_packet():

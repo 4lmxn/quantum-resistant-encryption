@@ -1,0 +1,18 @@
+# Wokwi resolves these by Arduino Library Manager name.
+# Locally: make firmware-setup installs the same ones via arduino-cli.
+
+# The MAX6675 K-type thermocouple amplifier on TT-101. This is the real
+# transmitter path (SIM_DHT22_STANDIN 0).
+#
+# RobTillaart's, not Adafruit's "MAX6675 library". Adafruit's declares
+# LiquidCrystal as a dependency purely for its bundled examples, so every build
+# fetched a display driver this sketch never includes. This one has an empty
+# depends= line. Its constructor is (select, miso, clock), the reverse of
+# Adafruit's, and read() returns a status byte instead of folding faults into
+# the temperature.
+MAX6675
+
+# Only used when SIM_DHT22_STANDIN is 1, because Wokwi has no MAX6675 part and
+# the simulated diagram falls back to a DHT22 stand-in. Chosen over Adafruit's
+# DHT driver because that one also drags in Adafruit Unified Sensor.
+DHT sensor library for ESPx

@@ -7,7 +7,14 @@ import socketio
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app import identity
-from app.config import SERVER_URL, TOPIC_COMMAND, TOPIC_ENCAPS, TOPIC_HELLO, TOPIC_PUBKEY
+from app.config import (
+    HEARTBEAT_TIMEOUT_S,
+    SERVER_URL,
+    TOPIC_COMMAND,
+    TOPIC_ENCAPS,
+    TOPIC_HELLO,
+    TOPIC_PUBKEY,
+)
 from app.pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
@@ -24,9 +31,21 @@ SERVER_PUBLIC = (_key_dir / "server.pub").read_bytes() if (
 
 
 class SimulatedActuatorNode:
+    """Drives XV-101, the emergency shutdown valve.
+
+    CLOSED is the safe state. The valve is held OPEN by an energised solenoid
+    and by nothing else, so anything that stops the node from actively holding
+    it open -- including this node losing contact with the server -- closes it.
+    """
+
     def __init__(self):
         self.key_b = None
-        self.relay_state = "OFF"
+        self.valve_state = "OPEN"
+        # Wall-clock of the last heartbeat whose GCM tag verified. Seeded at
+        # handshake so a node that never hears one still trips on schedule.
+        self.last_heartbeat = None
+        self.last_seq = 0
+        self.tripped_by_watchdog = False
 
     def establish_session(self, encapsulation_key):
         session_key, kem_ciphertext = encapsulate(encapsulation_key, LINK_ACTUATOR)
@@ -43,19 +62,44 @@ class SimulatedActuatorNode:
         cmd_data = json.loads(aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8"))
 
         command = cmd_data.get("command")
-        if command == "FAN_ON":
-            self.relay_state = "ON"
-        elif command == "FAN_OFF":
-            self.relay_state = "OFF"
-        elif command == "FAN_TOGGLE":
-            # The actuator owns the relay state, so a toggle needs no state
-            # sync with the server and cannot drift out of step with it.
-            self.relay_state = "OFF" if self.relay_state == "ON" else "ON"
+        if command == "TRIP":
+            self.valve_state = "CLOSED"
+        elif command == "RESET":
+            # A reset only reopens the valve. It does not clear the watchdog --
+            # if the heartbeat is still missing, the watchdog trips again on its
+            # next pass, which is the behaviour we want.
+            self.valve_state = "OPEN"
+            self.tripped_by_watchdog = False
         else:
             return False, f"Unknown Command: {command!r}"
 
-        running = "Fan Running" if self.relay_state == "ON" else "Fan Stopped"
-        return True, f"Relay State: {self.relay_state} ({running})"
+        flow = "flow stopped" if self.valve_state == "CLOSED" else "process running"
+        return True, f"XV-101 {self.valve_state} ({flow})"
+
+    def accept_heartbeat(self, packet):
+        """Verifies one sealed heartbeat and records that we heard it.
+
+        Returns False for a beat we have already counted. A replayed heartbeat
+        must not be able to hold the watchdog open, or capturing a single beat
+        would be enough to disable the trip indefinitely.
+        """
+        aesgcm = AESGCM(bytes(self.key_b))
+        body = json.loads(aesgcm.decrypt(
+            bytes.fromhex(packet["nonce"]), bytes.fromhex(packet["ciphertext"]), None
+        ).decode("utf-8"))
+        if body.get("command") != "HEARTBEAT":
+            return False
+        seq = int(body.get("seq", 0))
+        if seq <= self.last_seq:
+            return False
+        self.last_seq = seq
+        self.last_heartbeat = time.monotonic()
+        return True
+
+    def heartbeat_overdue(self):
+        if self.last_heartbeat is None:
+            return False
+        return (time.monotonic() - self.last_heartbeat) > HEARTBEAT_TIMEOUT_S
 
     def zeroize_key(self):
         if self.key_b is None:
@@ -113,6 +157,51 @@ def on_public_key(data):
 @sio.on("pqc_established")
 def on_established(data):
     print("[ACTUATOR NODE] Session Key B derived. Listening for server commands...")
+    # Seed the deadline now. Without this the watchdog would wait for a first
+    # heartbeat that may never arrive, which is precisely the failure it exists
+    # to catch.
+    actuator.last_heartbeat = time.monotonic()
+    sio.start_background_task(watchdog_loop)
+
+
+@sio.on("sis_heartbeat")
+def on_heartbeat(packet):
+    """A sealed proof that the safety controller is still there and still ours."""
+    if actuator.key_b is None:
+        return
+    try:
+        actuator.accept_heartbeat(packet)
+    except Exception as exc:
+        # A heartbeat that fails its tag is worse than a missing one: something
+        # is injecting traffic. Say so, and let the watchdog run its course.
+        sio.emit("relay_log", {
+            "type": "ERROR",
+            "msg": f"[ACTUATOR] Heartbeat REJECTED, tag mismatch ({type(exc).__name__}).",
+        })
+
+
+def watchdog_loop():
+    """Trips XV-101 when the authenticated heartbeat stops.
+
+    This is the fail-safe direction, and it is deliberately local: the decision
+    is made here, by the node holding the valve, so it survives exactly the
+    situation where the server can no longer be reached.
+    """
+    while sio.connected:
+        sio.sleep(1.0)
+        if actuator.key_b is None or actuator.tripped_by_watchdog:
+            continue
+        if not actuator.heartbeat_overdue():
+            continue
+        actuator.tripped_by_watchdog = True
+        actuator.valve_state = "CLOSED"
+        print(f"[ACTUATOR] Heartbeat lost for >{HEARTBEAT_TIMEOUT_S}s. TRIPPING XV-101.")
+        sio.emit("relay_log", {
+            "type": "ALERT",
+            "msg": f"[ACTUATOR] Dead-man watchdog: no authenticated heartbeat for "
+                   f"{HEARTBEAT_TIMEOUT_S}s. XV-101 CLOSED locally.",
+        })
+        sio.emit("relay_actuator_ui", {"valve": actuator.valve_state})
 
 
 @sio.on("execute_actuator_command")
@@ -136,7 +225,7 @@ def on_actuator_command(packet):
             },
         )
         if success:
-            sio.emit("relay_actuator_ui", {"relay": actuator.relay_state})
+            sio.emit("relay_actuator_ui", {"valve": actuator.valve_state})
     except Exception as e:
         sio.emit(
             "relay_log",
