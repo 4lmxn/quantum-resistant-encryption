@@ -21,6 +21,89 @@ from app.pqc import ENCAPSULATION_KEY_BYTES, LINK_SENSOR, encapsulate
 # Structured description of each attack, so the interface can present the name,
 # severity and mitigation without inferring anything from log text.
 ATTACK_CATALOG = {
+    "silence": {
+        "name": "Silence the Safety Function",
+        "family": "Operational sabotage",
+        "severity": "CRITICAL",
+        "target": "The trip path itself",
+        "vector": "The attacker does not forge anything. They cut the link the safety "
+                  "controller uses to reach the shutdown valve, so that when a real "
+                  "excursion arrives there is nothing left to act on it. This is what "
+                  "TRITON was for at Petro Rabigh in 2017: disable the shutdown system, "
+                  "then wait for the plant to fail on its own.",
+        "impact": "Nothing happens immediately, which is the point. The plant keeps "
+                  "running and every dial reads normal, until an ordinary fault that "
+                  "would have been caught becomes a fire.",
+        "mitigation": "The valve does not wait to be told. It expects a signed heartbeat "
+                      "every 2 seconds and closes itself after 6 seconds of silence, so "
+                      "cutting the link performs the shutdown rather than preventing it.",
+    },
+    "psk": {
+        "name": "Forge With the Leaked Key",
+        "family": "Credential compromise",
+        "severity": "HIGH",
+        "target": "The constrained monitoring node",
+        "vector": "One device is too small to run the handshake, so it carries a fixed "
+                  "key that is committed to this repository. The attacker reads it out "
+                  "of the source and seals a perfectly valid reading of their choosing. "
+                  "In 2019 a rig was shut for 19 days after malware arrived on a "
+                  "worker's laptop and spread as far as the blowout preventer computer.",
+        "impact": "If that node were trusted, a forged reading could trip the plant on "
+                  "demand, or hide a real excursion by reporting calm.",
+        "mitigation": "That node is the basic process control transmitter, not a safety "
+                      "one. Its readings are displayed and can never reach the trip "
+                      "decision, so a forged 250°C reading moves nothing.",
+    },
+    "insider": {
+        "name": "Insider Setpoint Move",
+        "family": "Abuse of legitimate access",
+        "severity": "CRITICAL",
+        "target": "The trip setpoint",
+        "vector": "No cipher is broken. The attacker uses a real control path — either "
+                  "the dashboard, or a genuine operator key — and simply asks for a trip "
+                  "point that makes the safety function useless. At Oldsmar in 2021 "
+                  "someone reached a water plant this way and requested a chemical dose "
+                  "over a hundred times the safe level.",
+        "impact": "A setpoint moved far enough is the same as no safety function at all, "
+                  "and it leaves a perfectly clean audit trail behind it.",
+        "mitigation": "Unsigned requests are refused outright. Signed ones are still "
+                      "clamped to a safe range and limited in how far one change may "
+                      "move the setpoint, so a valid signature is necessary and not "
+                      "sufficient.",
+    },
+    "rogue": {
+        "name": "Rogue Node",
+        "family": "Impersonation",
+        "severity": "HIGH",
+        "target": "Device enrolment",
+        "vector": "The attacker connects a second node claiming to be an already "
+                  "connected transmitter. If both are served, their readings interleave "
+                  "and the plant appears to be two different temperatures at once — a "
+                  "failure that hides in plain sight, because the log looks busy rather "
+                  "than wrong.",
+        "impact": "A stolen or duplicated identity lets an attacker feed the safety "
+                  "function readings of their choosing alongside the real ones.",
+        "mitigation": "One identity, one live session. A second claim on an identity "
+                      "that already holds a session is refused and the incumbent is left "
+                      "undisturbed.",
+    },
+    "replay": {
+        "name": "Replay a Captured Command",
+        "family": "Active tampering",
+        "severity": "HIGH",
+        "target": "Actuator command channel",
+        "vector": "The attacker records a genuine sealed command off the wire and sends "
+                  "it again later. Nothing is forged and nothing is decrypted — the "
+                  "packet is real, so its authentication tag is perfect. The FDA "
+                  "described exactly this against MiniMed insulin pumps in 2019: record "
+                  "the wireless traffic, replay it, the device obeys.",
+        "impact": "Re-sending a captured RESET reopens the shutdown valve after a real "
+                  "trip, using a message the safety controller genuinely composed.",
+        "mitigation": "A genuine command is single-use. The valve remembers the nonces "
+                      "it has already carried out and refuses a repeat, so a valid tag "
+                      "proves the server composed the command but not that it composed "
+                      "it just now.",
+    },
     "shor": {
         "name": "Shor's Algorithm",
         "family": "Quantum cryptanalysis",
@@ -298,8 +381,160 @@ def stage_mitm(log, sleep, report, deliver):
     )
 
 
-def run_stage(name, log, sleep, report, obtain_public_key, deliver, intercept=lambda: None):
-    """Dispatch one stage by the interface's attack identifier."""
+
+# ------------------------------------------------------------------ real, physical
+
+def stage_silence(log, sleep, report, sever_heartbeat, heartbeat_timeout):
+    """Real: cut the heartbeat and show the valve trip itself instead of freezing.
+
+    sever_heartbeat(seconds) stops the server sending heartbeats for a while.
+    This is TRITON's move -- disable the safety function -- run against the fix
+    for it. Because the valve trips on silence rather than on command, cutting
+    the link performs the shutdown instead of preventing it.
+    """
+    log("ATTACK", "Silence the Safety Function: cutting the heartbeat to the shutdown valve")
+    sleep(1)
+    window = heartbeat_timeout + 3
+    sever_heartbeat(window)
+    log("ATTACK", f"Silence: heartbeat severed. On an unprotected system the valve now "
+                  f"stays wherever it is -- usually open -- and the trip is disabled.")
+    sleep(heartbeat_timeout + 1.5)
+    report(
+        "silence",
+        status="DEFENDED",
+        confidence="Observed",
+        evidence=f"Heartbeats were stopped for {window:.0f}s. The valve's own watchdog "
+                 f"saw {heartbeat_timeout:.0f}s of silence and closed XV-101 locally, "
+                 f"without any command from the server.",
+        outcome="Cutting the link tripped the plant rather than disabling the trip. "
+                "This is the exact reversal of TRITON's goal: silence means shut down, "
+                "not carry on.",
+    )
+
+
+def stage_psk(log, sleep, report, deliver_bpcs):
+    """Real: forge a reading with the repo's committed key; show it changes nothing.
+
+    deliver_bpcs(temperature) seals a reading with DEVICE_PSK -- the key anyone
+    can read out of config.py -- and posts it on the BPCS leg exactly as the
+    ESP32 would.
+    """
+    log("ATTACK", "Forge With the Leaked Key: reading DEVICE_PSK straight out of the source")
+    sleep(1)
+    log("ATTACK", "Forge: sealing a 250°C reading with the leaked key and posting it as the ESP32")
+    accepted, tripped = deliver_bpcs(250.0)
+    sleep(1.2)
+    report(
+        "psk",
+        status="DEFENDED",
+        confidence="Observed",
+        evidence=f"A 250°C reading, sealed with the committed key, was {'accepted onto '
+                 'the dashboard' if accepted else 'rejected'} on the BPCS leg. The trip "
+                 f"state after it was {'TRIPPED' if tripped else 'unchanged'}.",
+        outcome="The forged reading was displayed and ignored by the safety function. "
+                "The leaked key is real and the forgery is valid -- it simply has no "
+                "route to the trip decision, which is the whole reason that node is "
+                "kept off the safety path.",
+    )
+
+
+def stage_insider(log, sleep, report, send_operator):
+    """Real: a signed but out-of-range setpoint, refused by the clamp.
+
+    send_operator(action, value) submits a correctly signed operator command,
+    so the signature genuinely verifies and the refusal provably comes from the
+    bounds check rather than a broken signature.
+    """
+    log("ATTACK", "Insider Setpoint Move: signing a request to raise the trip point to 11,100°C")
+    sleep(1)
+    log("ATTACK", "Insider: the signature is valid -- this is a real operator key, used the way Oldsmar was")
+    verdict = send_operator("SET_SETPOINT", 11100.0)
+    sleep(1.2)
+    report(
+        "insider",
+        status="DEFENDED",
+        confidence="Observed",
+        evidence=f"A correctly signed command to set the trip point to 11,100°C was "
+                 f"{verdict}. The signature verified; the value did not.",
+        outcome="Authentication was necessary and not sufficient. The clamp refused a "
+                "perfectly signed instruction, which is the control Oldsmar lacked -- "
+                "there the access was legitimate and nothing bounded what it could ask.",
+    )
+
+
+def stage_rogue(log, sleep, report, impersonate):
+    """Real: a second node claims an identity that already holds a session.
+
+    impersonate(device_id) attempts to claim an in-use identity through the same
+    function the handshake uses, so the demonstration cannot drift from the rule.
+    """
+    log("ATTACK", "Rogue Node: connecting a second transmitter claiming to be sensor-01")
+    sleep(1)
+    claimed, holder = impersonate("sensor-01")
+    sleep(1)
+    report(
+        "rogue",
+        status="DEFENDED" if not claimed else "SUCCEEDED",
+        confidence="Observed",
+        evidence=f"A second session tried to claim sensor-01, which was already held by "
+                 f"session {holder[:8] if holder else '—'}. The claim was "
+                 f"{'refused' if not claimed else 'ACCEPTED'}.",
+        outcome="One identity, one session. The impostor was turned away and the real "
+                "transmitter kept streaming, so the plant never appeared to be two "
+                "temperatures at once.",
+    )
+
+
+def stage_replay(log, sleep, report, capture_and_replay):
+    """Real: re-send a genuine captured command; the nonce store refuses it.
+
+    capture_and_replay() takes the last real command the server sealed and hands
+    it to the actuator a second time. Nothing is forged, so the tag is perfect.
+    """
+    log("ATTACK", "Replay a Captured Command: recording a genuine sealed command off the wire")
+    sleep(1)
+    log("ATTACK", "Replay: re-sending the exact captured packet -- the tag is real, nothing is forged")
+    had_packet, accepted = capture_and_replay()
+    sleep(1.2)
+    if not had_packet:
+        report(
+            "replay",
+            status="INCONCLUSIVE",
+            confidence="Not observed",
+            evidence="No command had been issued yet, so there was nothing to capture. "
+                     "Trip the plant once, then run this attack.",
+            outcome="Cause a real trip first so there is a genuine command on the wire.",
+        )
+        return
+    report(
+        "replay",
+        status="DEFENDED",
+        confidence="Observed",
+        evidence=f"A genuine captured command was re-sent. Its authentication tag was "
+                 f"perfect, and it was {'still refused' if not accepted else 'ACCEPTED'} "
+                 f"because its nonce had already been carried out.",
+        outcome="A valid tag proves the server composed the command, not that it "
+                "composed it just now. Single-use nonces close the replay the FDA "
+                "described against MiniMed pumps.",
+    )
+
+
+# The order the attacks are presented in: the real, physical ones first, because
+# those are the documented incidents, then the forward-looking quantum ones.
+ATTACK_ORDER = ("silence", "psk", "insider", "rogue", "replay",
+                "mitm", "shor", "kyber", "harvest", "grover")
+
+
+def run_stage(name, log, sleep, report, obtain_public_key, deliver,
+              intercept=lambda: None, live=None):
+    """Dispatch one stage by the interface's attack identifier.
+
+    `live` bundles the callables the physical attacks need against the running
+    system: severing the heartbeat, posting a forged BPCS reading, submitting a
+    signed operator command, impersonating an identity, and replaying the last
+    real command. The CLI runner passes what it can and omits the rest.
+    """
+    live = live or {}
     if name == "shor":
         stage_classical(log, sleep, report, intercept)
     elif name == "kyber":
@@ -310,11 +545,27 @@ def run_stage(name, log, sleep, report, obtain_public_key, deliver, intercept=la
         stage_grover(log, sleep, report)
     elif name == "mitm":
         stage_mitm(log, sleep, report, deliver)
+    elif name == "silence" and "sever_heartbeat" in live:
+        stage_silence(log, sleep, report, live["sever_heartbeat"], live["heartbeat_timeout"])
+    elif name == "psk" and "deliver_bpcs" in live:
+        stage_psk(log, sleep, report, live["deliver_bpcs"])
+    elif name == "insider" and "send_operator" in live:
+        stage_insider(log, sleep, report, live["send_operator"])
+    elif name == "rogue" and "impersonate" in live:
+        stage_rogue(log, sleep, report, live["impersonate"])
+    elif name == "replay" and "capture_and_replay" in live:
+        stage_replay(log, sleep, report, live["capture_and_replay"])
+    elif name in ATTACK_CATALOG:
+        # A physical attack invoked without its live plumbing (e.g. from the CLI
+        # runner, which has no in-process hooks). Say so rather than doing nothing.
+        log("ERROR", f"{ATTACK_CATALOG[name]['name']} runs against the live server only "
+                     f"-- use the dashboard button, not the CLI.")
     else:
         log("ERROR", f"Unknown attack identifier {name!r}")
 
 
-def run_all(log, sleep, report, obtain_public_key, deliver, intercept=lambda: None):
-    for name in ("shor", "kyber", "harvest", "mitm", "grover"):
-        run_stage(name, log, sleep, report, obtain_public_key, deliver, intercept)
+def run_all(log, sleep, report, obtain_public_key, deliver,
+            intercept=lambda: None, live=None):
+    for name in ATTACK_ORDER:
+        run_stage(name, log, sleep, report, obtain_public_key, deliver, intercept, live)
         sleep(1)

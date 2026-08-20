@@ -46,6 +46,12 @@ class SimulatedActuatorNode:
         self.last_heartbeat = None
         self.last_seq = 0
         self.tripped_by_watchdog = False
+        # Command nonces already obeyed. The server refuses a repeated nonce on
+        # telemetry coming in, but nothing protected this direction: a captured
+        # TRIP or RESET could simply be sent again and the valve would obey it,
+        # which is the flaw the FDA described in the 2019 MiniMed insulin pump
+        # recall -- record the wireless traffic, replay it, the device acts.
+        self.seen_command_nonces = set()
 
     def establish_session(self, encapsulation_key):
         session_key, kem_ciphertext = encapsulate(encapsulation_key, LINK_ACTUATOR)
@@ -60,6 +66,13 @@ class SimulatedActuatorNode:
 
         # Decrypt & Validate GCM Tag
         cmd_data = json.loads(aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8"))
+
+        # A valid tag proves the server composed this command. It does not prove
+        # the server composed it *just now*, so a genuine command is single-use.
+        nonce_hex = packet["nonce"]
+        if nonce_hex in self.seen_command_nonces:
+            return False, "REPLAY REFUSED: this command was already carried out"
+        self.seen_command_nonces.add(nonce_hex)
 
         command = cmd_data.get("command")
         if command == "TRIP":

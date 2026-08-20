@@ -185,11 +185,35 @@ td.k{color:var(--key)}td.ok{color:var(--ok)}td.no{color:var(--bad);font-weight:6
 .val.warn{color:var(--warn)}.val.off{color:var(--faint)}
 
 /* the unsigned legacy path, kept so it can be seen being refused */
+.controls{margin-top:.5em;display:flex;flex-direction:column;gap:.45em}
+.ctl-h{font-size:.68em;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--faint)}
+.esd{display:flex;align-items:center;justify-content:center;gap:.5em;width:100%;
+  padding:.65em .6em;border-radius:5px;border:1px solid var(--bad);
+  background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);
+  font-family:var(--mono);font-weight:600;font-size:.82em;letter-spacing:.04em;
+  cursor:pointer;transition:background .12s,transform .08s}
+.esd:hover{background:color-mix(in srgb,var(--bad) 24%,transparent)}
+.esd:active{transform:translateY(1px)}
+.esd:focus-visible{outline:2px solid var(--bad);outline-offset:2px}
+.esd-dot{width:.6em;height:.6em;border-radius:50%;background:var(--bad);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 25%,transparent)}
+.esd kbd{font-family:var(--mono);font-size:.85em;opacity:.6;margin-left:.2em}
+.ctl-note{font-size:.72em;color:var(--faint);line-height:1.4}
+.signed-row{display:flex;align-items:center;gap:.5em;padding:.4em .55em;
+  border:1px solid var(--line);border-radius:4px;background:var(--panel-2)}
+.signed-row::before{content:"\1F512";font-size:.85em;opacity:.7}
+.signed-row > div{display:flex;flex-direction:column;gap:.1em;min-width:0}
+.signed-row b{font-size:.82em;font-weight:600}
+.signed-row .mono{font-size:.72em;color:var(--info);overflow-x:auto;white-space:nowrap}
 .unsigned{border:1px dashed rgba(248,113,113,.5);border-radius:5px;
   padding:.4em .5em;margin-top:.35em;background:rgba(248,113,113,.05)}
 .unsigned .tagline{font-size:.67em;font-weight:700;letter-spacing:.05em;
   color:var(--bad);display:block;margin-bottom:.3em}
 .unsigned input[type=range]{accent-color:var(--bad)}
+.atk-group{font-size:.66em;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--faint);padding:.9em .2em .35em;border-top:1px solid var(--line);margin-top:.3em}
+.atk-group:first-child{border-top:none;margin-top:0;padding-top:.2em}
 code{font-family:'IBM Plex Mono',monospace;font-size:.92em;color:var(--info)}
 
 /* controls */
@@ -257,15 +281,21 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
           <div class="val off" id="bypass">NOT ASSERTED</div></div>
       </div>
       <div class="fine" id="bounds">Bounds 40.0–120.0 °C · max single step 15.0 °C</div>
-      <div class="unsigned">
-        <span class="tagline">Legacy unsigned path — will be refused</span>
-        <div class="fine" style="display:flex;justify-content:space-between;gap:.5em">
-          <label for="limit">Setpoint request</label><b class="mono" id="limit-req">80.0 °C</b></div>
-        <input id="limit" type="range" min="40" max="120" step="0.5" value="80"
-               aria-valuemin="40" aria-valuemax="120" aria-valuenow="80"
-               aria-valuetext="80.0 degrees Celsius"
-               oninput="previewSetpoint(this.value)" onchange="requestSetpoint(this.value)">
-        <div class="fine">Signed path: <code>make operator ARGS="setpoint 85"</code></div>
+      <div class="controls">
+        <div class="ctl-h">Operator controls</div>
+        <button class="esd" onclick="manualTrip()" title="Manual emergency shutdown (keyboard: T)">
+          <span class="esd-dot" aria-hidden="true"></span>MANUAL ESD &mdash; TRIP NOW<kbd aria-hidden="true">T</kbd></button>
+        <div class="ctl-note">A trip is always allowed &mdash; it moves the plant to its safe state.
+          Everything below reduces safety, so each needs a signed operator command.</div>
+        <div class="signed-row">
+          <div><b>Move trip setpoint</b><span class="fine mono">make operator ARGS="setpoint 85"</span></div>
+        </div>
+        <div class="signed-row">
+          <div><b>Reset a latched trip</b><span class="fine mono">make operator ARGS="reset"</span></div>
+        </div>
+        <div class="signed-row">
+          <div><b>Maintenance bypass</b><span class="fine mono">make operator ARGS="bypass on"</span></div>
+        </div>
       </div>
     </article>
 
@@ -282,15 +312,11 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
         <span class="lane safety">CAN TRIP THE PLANT</span></div>
       <div class="big ok mono" id="valve" role="status" aria-live="polite">XV-101 OPEN</div>
       <div class="fine" id="fp-actuator">No key yet — this node holds nothing until its key exchange finishes</div>
-      <div class="unsigned" id="main">
-        <span class="tagline">Legacy unsigned path — will be refused</span>
-        <div class="row">
-          <button class="btn" onclick="flip()"
-                  title="Unsigned override — the server refuses this (keyboard: F)">Override XV-101<kbd aria-hidden="true">F</kbd></button>
-          <button class="btn" id="auto-btn" onclick="resume()"
-                  title="Unsigned bypass clear — the server refuses this (keyboard: A)">Clear bypass<kbd aria-hidden="true">A</kbd></button>
-        </div>
-        <div class="fine">Signed path: <code>make operator ARGS="reset"</code></div>
+      <div class="controls">
+        <button class="esd" onclick="manualTrip()" title="Manual emergency shutdown (keyboard: T)">
+          <span class="esd-dot" aria-hidden="true"></span>MANUAL ESD &mdash; TRIP NOW<kbd aria-hidden="true">T</kbd></button>
+        <div class="ctl-note">The valve only ever moves toward safe from here. Reopening it after a
+          trip is a signed reset, verified with the same tag as every automatic command.</div>
       </div>
       <div class="fine">CLOSED is the safe state · GCM tag verified before actuation ·
         trips if the authenticated heartbeat stops</div>
@@ -301,7 +327,7 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
 
     <!-- attack list -->
     <section class="pane">
-      <div class="head"><h2>Attack simulations</h2><span class="hint">Keys 1–5</span></div>
+      <div class="head"><h2>Attack simulations</h2><span class="hint">Real first, then quantum</span></div>
       <div class="body" id="atk-list"></div>
     </section>
 
@@ -410,22 +436,35 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
 const socket = io(), $ = id => document.getElementById(id);
 
 const ATTACKS = [
-  {id:'shor',    n:'1', name:"Shor's Algorithm",                    sev:'CRITICAL'},
-  {id:'kyber',   n:'2', name:'Lattice Reduction (BKZ)',             sev:'CRITICAL'},
-  {id:'harvest', n:'3', name:'Harvest Now, Decrypt Later',          sev:'HIGH'},
-  {id:'mitm',    n:'4', name:'Man-in-the-Middle Command Injection', sev:'CRITICAL'},
-  {id:'grover',  n:'5', name:"Grover's Algorithm",                  sev:'MEDIUM'},
+  {id:'silence', n:'1', name:'Silence the Safety Function', sev:'CRITICAL', group:'Documented incidents'},
+  {id:'psk',     n:'2', name:'Forge With the Leaked Key',   sev:'HIGH',     group:'Documented incidents'},
+  {id:'insider', n:'3', name:'Insider Setpoint Move',       sev:'CRITICAL', group:'Documented incidents'},
+  {id:'rogue',   n:'4', name:'Rogue Node',                  sev:'HIGH',     group:'Documented incidents'},
+  {id:'replay',  n:'5', name:'Replay a Captured Command',   sev:'HIGH',     group:'Documented incidents'},
+  {id:'mitm',    n:'6', name:'Forged Command Injection',    sev:'CRITICAL', group:'Documented incidents'},
+  {id:'shor',    n:'7', name:"Shor's Algorithm",            sev:'CRITICAL', group:'Quantum — forward-looking'},
+  {id:'kyber',   n:'8', name:'Lattice Reduction (BKZ)',     sev:'CRITICAL', group:'Quantum — forward-looking'},
+  {id:'harvest', n:'9', name:'Harvest Now, Decrypt Later',  sev:'HIGH',     group:'Quantum — forward-looking'},
+  {id:'grover',  n:'0', name:"Grover's Algorithm",          sev:'MEDIUM',   group:'Quantum — forward-looking'},
 ];
 const findings = {};
 let selected = null;
 
-$('atk-list').innerHTML = ATTACKS.map(a => `
-  <button class="atk" id="atk-${a.id}" aria-pressed="false" onclick="run('${a.id}')"
+(function renderAttacks(){
+  let html = '', lastGroup = '';
+  for (const a of ATTACKS) {
+    if (a.group !== lastGroup) {
+      html += `<div class="atk-group">${a.group}</div>`;
+      lastGroup = a.group;
+    }
+    html += `<button class="atk" id="atk-${a.id}" aria-pressed="false" onclick="run('${a.id}')"
           title="Run ${a.name}">
-    <span class="n" aria-hidden="true">${a.n}</span>
-    <span><span class="nm">${a.name}</span><span class="st" id="st-${a.id}">Not run</span></span>
-    <span class="sev sev-${a.sev}">${a.sev}</span>
-  </button>`).join('');
+      <span class="n" aria-hidden="true">${a.n}</span>
+      <span><span class="nm">${a.name}</span><span class="st" id="st-${a.id}">Not run</span></span>
+      <span class="sev sev-${a.sev}">${a.sev}</span></button>`;
+  }
+  $('atk-list').innerHTML = html;
+})();
 
 function run(id) {
   select(id);
@@ -536,20 +575,11 @@ function applySis(s) {
 }
 
 function setSetpoint(v) {
-  const l = $('limit');
-  // Snapping the slider back to the real setpoint is deliberate: the dashboard
-  // reports the setpoint, it does not get to propose one.
-  l.value = v;
-  l.setAttribute('aria-valuenow', v);
-  l.setAttribute('aria-valuetext', v.toFixed(1) + ' degrees Celsius');
+  // The dashboard reports the setpoint; it no longer proposes one, so this is a
+  // display update only.
   $('limit-label').textContent = v.toFixed(1) + ' °C';
-  $('limit-req').textContent = v.toFixed(1) + ' °C';
 }
 function setBounds(s) {
-  const l = $('limit');
-  l.min = s.setpoint_min; l.max = s.setpoint_max;
-  l.setAttribute('aria-valuemin', s.setpoint_min);
-  l.setAttribute('aria-valuemax', s.setpoint_max);
   $('bounds').textContent = 'Bounds ' + s.setpoint_min.toFixed(1) + '–' +
     s.setpoint_max.toFixed(1) + ' °C · max single step ' + s.max_step.toFixed(1) +
     ' °C · signed operator command only';
@@ -663,21 +693,11 @@ function renderLadder(sensor, actuator) {
     </div>`).join('');
 }
 
-/* The three unsigned legacy controls. They still emit exactly what they always
-   emitted; the server refuses all three and says so in red. Nothing here updates
-   the panel, because nothing here changes the plant. */
-function flip(){ socket.emit('toggle_actuator_override'); }
-function resume(){ socket.emit('resume_automatic'); }
-function previewSetpoint(v){
-  const l = $('limit');
-  l.setAttribute('aria-valuenow', v);
-  l.setAttribute('aria-valuetext', parseFloat(v).toFixed(1) + ' degrees Celsius');
-  $('limit-req').textContent = parseFloat(v).toFixed(1) + ' °C';
-}
-function requestSetpoint(v){
-  previewSetpoint(v);
-  socket.emit('set_threshold', {threshold: parseFloat(v)});
-}
+/* Manual emergency shutdown. Unlike a setpoint change or a reset, tripping is
+   the fail-safe direction, so this control genuinely acts -- exactly like the
+   red button in a real control room. The dangerous directions stay on the
+   signed CLI. */
+function manualTrip(){ socket.emit('manual_trip'); }
 function tab(i){
   [0,1,2,3].forEach(n => {
     const t = $('tab-' + n);
@@ -696,10 +716,9 @@ document.querySelector('[role=tablist]').addEventListener('keydown', e => {
 
 document.addEventListener('keydown', e => {
   if (e.target.matches('input, textarea, [contenteditable]')) return;
-  const n = ['1','2','3','4','5'].indexOf(e.key);
-  if (n > -1) { run(ATTACKS[n].id); return; }
-  if (e.key === 'f' || e.key === 'F') flip();
-  if (e.key === 'a' || e.key === 'A') resume();
+  const hit = ATTACKS.find(a => a.n === e.key);
+  if (hit) { run(hit.id); return; }
+  if (e.key === 't' || e.key === 'T') manualTrip();
 });
 </script>
 </body>

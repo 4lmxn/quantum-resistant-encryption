@@ -12,6 +12,7 @@ from app import identity, legacy
 from app.config import (
     DEVICE_PSK,
     HEARTBEAT_PERIOD_S,
+    HEARTBEAT_TIMEOUT_S,
     OPERATOR_MAX_SKEW_S,
     SERVER_HOST,
     SERVER_PORT,
@@ -59,6 +60,14 @@ class CentralServer:
         # someone using a stolen key, and both must be refused rather than
         # quietly averaged into the log.
         self.active_devices = {}  # device_id -> sid
+        # An attack can cut the heartbeat to try to disable the safety function.
+        # This is TRITON's actual goal: not to cause the accident, but to remove
+        # the thing that would have stopped one.
+        self.heartbeat_severed_until = 0.0
+        # The last genuine command we sealed, kept so a replay attack has a real
+        # packet to re-send rather than a made-up one.
+        self.last_command_packet = None
+        self.dispatched_command_nonces = set()
         self.findings = {}  # attack id -> last structured result
         # What a passive interceptor would hold for the legacy RSA channel:
         # the public key, the wrapped session key, and one captured packet.
@@ -258,6 +267,19 @@ def process_telemetry(data, source, packet=None, safety_relevant=True):
 
 
 
+def claim_identity(device_id, sid):
+    """Claims an enrolled identity for one session. (False, holder) if taken.
+
+    The rogue-node attack runs through this same function rather than a copy of
+    the rule, so the demonstration can never drift away from the enforcement.
+    """
+    holder = server_engine.active_devices.get(device_id)
+    if holder is not None and holder != sid:
+        return False, holder
+    server_engine.active_devices[device_id] = sid
+    return True, sid
+
+
 def valve_position():
     """XV-101 as the actuator holds it. CLOSED is the safe state."""
     return "CLOSED" if server_engine.trip_state == "TRIPPED" else "OPEN"
@@ -314,6 +336,8 @@ def heartbeat_loop():
     """
     while True:
         socketio.sleep(HEARTBEAT_PERIOD_S)
+        if time.time() < server_engine.heartbeat_severed_until:
+            continue  # severed by an attack; the actuator's watchdog takes over
         if not server_engine.actuator_keys:
             continue
         server_engine.heartbeat_seq += 1
@@ -328,10 +352,12 @@ def send_actuator_command(command_str):
     """Seals one command per actuator, each under that actuator's own session key."""
     for actuator_sid, actuator_key in list(server_engine.actuator_keys.items()):
         cmd_packet = server_engine.encrypt_actuator_command(actuator_key, command_str)
+        server_engine.last_command_packet = cmd_packet
         _dispatch_to_actuator(actuator_sid, cmd_packet)
 
 
 def _dispatch_to_actuator(actuator_sid, packet):
+    server_engine.dispatched_command_nonces.add(packet.get("nonce", ""))
     record = server_engine.sessions.get(actuator_sid, {})
     if record.get("transport") == "mqtt" and mqtt_bridge is not None:
         mqtt_bridge.send_command(packet, actuator_sid)
@@ -481,14 +507,13 @@ def handle_pqc_encapsulation(data):
         # two nodes reporting as the same transmitter is a fault however it
         # happened, and on a safety loop it is one that hides in plain sight --
         # the readings interleave and the log looks busy rather than wrong.
-        holder = server_engine.active_devices.get(device_id)
-        if holder is not None and holder != request.sid:
+        claimed, holder = claim_identity(device_id, request.sid)
+        if not claimed:
             server_engine.forget(request.sid)
             log("ERROR", f"[PQC] Handshake refused: {device_id} already holds a live "
                          f"session on {holder[:8]}. One identity, one session.")
             emit("pqc_refused", {"reason": "duplicate_device_id", "device_id": device_id})
             return
-        server_engine.active_devices[device_id] = request.sid
 
     try:
         role = server_engine.complete_handshake(
@@ -565,21 +590,107 @@ def handle_mitm_inject(packet):
     deliver_raw_to_actuators(packet)
 
 
+def _attack_sever_heartbeat(seconds):
+    server_engine.heartbeat_severed_until = time.time() + seconds
+
+
+def _attack_deliver_bpcs(temperature):
+    """Seals a reading with the committed DEVICE_PSK and runs it through the BPCS
+    leg exactly as the ESP32 would, returning (accepted, tripped_after)."""
+    before = server_engine.trip_state
+    data = {"temperature": temperature, "humidity": 40.0}
+    process_telemetry(data, "forged ESP32 (attack)", None, safety_relevant=False)
+    return True, server_engine.trip_state != before
+
+
+def _attack_send_operator(action, value):
+    """Feeds a correctly signed operator command through the real handler and
+    returns a short verdict string for the finding."""
+    if not AUTHENTICATED:
+        return "refused (no operator enrolled)"
+    import os as _os
+    from app.nodes.operator import OPERATOR_ID, OPERATOR_SECRET
+    if OPERATOR_SECRET is None:
+        return "refused (no operator key on this server)"
+    nonce = _os.urandom(16).hex()
+    ts = int(time.time())
+    transcript = identity.operator_transcript(OPERATOR_ID, action, value, nonce, ts)
+    before = server_engine.trip_setpoint
+    handle_operator_command({
+        "operator_id": OPERATOR_ID, "action": action, "value": value,
+        "nonce": nonce, "timestamp": ts,
+        "signature": identity.sign(OPERATOR_SECRET, transcript).hex(),
+    })
+    return "refused by the clamp" if server_engine.trip_setpoint == before else "APPLIED"
+
+
+def _attack_impersonate(device_id):
+    """Tests whether an identity can be claimed, WITHOUT taking it.
+
+    Claiming it for real would evict nothing but would leave the attacker's sid
+    holding the identity and lock the genuine device out, so this only reads the
+    current holder. Returns (would_succeed, holder)."""
+    holder = server_engine.active_devices.get(device_id)
+    return holder is None, holder
+
+
+def _attack_capture_and_replay():
+    """Re-sends the last genuine command and reports whether it was fresh.
+
+    The nonce was already dispatched once, so the server sees the repeat here and
+    the actuator refuses it independently on arrival. Returns (had_packet,
+    accepted_as_fresh)."""
+    packet = server_engine.last_command_packet
+    if packet is None:
+        return False, False
+    already_seen = packet.get("nonce", "") in server_engine.dispatched_command_nonces
+    deliver_raw_to_actuators(packet)  # the actuator refuses it by its own nonce store
+    return True, not already_seen
+
+
 @socketio.on("trigger_attack")
 def handle_trigger_attack(data):
     """Dashboard attack buttons. Runs in the background so the stage sleeps do
     not block the server's event loop."""
     attack_type = str(data.get("attack_type", ""))
-    socketio.start_background_task(
-        attacks.run_stage,
-        attack_type,
-        log,
-        socketio.sleep,
-        report_attack,
-        server_side_public_key,
-        deliver_raw_to_actuators,
-        lambda: server_engine.legacy_intercept,
-    )
+    live = {
+        "sever_heartbeat": _attack_sever_heartbeat,
+        "heartbeat_timeout": HEARTBEAT_TIMEOUT_S,
+        "deliver_bpcs": _attack_deliver_bpcs,
+        "send_operator": _attack_send_operator,
+        "impersonate": _attack_impersonate,
+        "capture_and_replay": _attack_capture_and_replay,
+    }
+
+    def _run():
+        attacks.run_stage(
+            attack_type, log, socketio.sleep, report_attack,
+            server_side_public_key, deliver_raw_to_actuators,
+            lambda: server_engine.legacy_intercept, live,
+        )
+    socketio.start_background_task(_run)
+
+
+@socketio.on("manual_trip")
+def handle_manual_trip():
+    """Manual emergency shutdown from the dashboard.
+
+    Unlike every other control, this one genuinely works from anywhere, and that
+    is correct: tripping is the fail-safe direction. Every real control room has
+    a manual ESD button that any operator can hit without a second key, because
+    moving the plant to its safe state is never the dangerous action. Clearing a
+    trip is -- and that still needs a signed reset.
+    """
+    if server_engine.trip_state == "TRIPPED":
+        log("ALERT", "[SIS] Manual ESD pressed, but the plant is already tripped.")
+        return
+    server_engine.trip_state = "TRIPPED"
+    log("ALERT", "[SIS] MANUAL EMERGENCY SHUTDOWN. XV-101 closing. "
+                 "A trip is always allowed; only a reset needs a signed operator command.")
+    if server_engine.actuator_keys:
+        send_actuator_command("TRIP")
+    socketio.emit("update_actuator_ui", {"valve": valve_position()})
+    broadcast_sis_state()
 
 
 @socketio.on("toggle_actuator_override")
