@@ -34,6 +34,25 @@ body{background:var(--bg);color:var(--ink);
 .sr-only:focus{position:static;width:auto;height:auto;margin:0;clip:auto;
   padding:.4em .8em;background:var(--info);color:#000;border-radius:4px}
 :focus-visible{outline:2px solid var(--info);outline-offset:2px}
+.lock{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;
+  background:rgba(4,6,10,.92);backdrop-filter:blur(3px)}
+.lock.hidden{display:none}
+.lock-box{background:var(--panel);border:1px solid var(--line);border-radius:6px;
+  padding:2rem 2.2rem;width:min(90vw,22rem);display:flex;flex-direction:column;gap:.8em;
+  box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.lock-tag{align-self:flex-start;font-family:'IBM Plex Sans Condensed',sans-serif;font-weight:700;
+  font-size:1.3em;color:var(--bg);background:var(--warn);padding:0 .5em;border-radius:3px}
+.lock-box h2{font-family:'IBM Plex Sans Condensed',sans-serif;font-size:1.3em;text-transform:uppercase;letter-spacing:.02em}
+.lock-hint{font-size:.85em;color:var(--faint)}
+#pin{font-family:var(--mono);font-size:2em;letter-spacing:.5em;text-align:center;
+  padding:.3em;border-radius:5px;border:1px solid var(--line-2);background:var(--panel-2);
+  color:var(--ink);width:100%}
+#pin:focus{outline:2px solid var(--info);outline-offset:2px}
+.lock-msg{font-size:.82em;min-height:1.2em;color:var(--bad)}
+.lock-btn{padding:.65em;border-radius:5px;border:1px solid var(--warn);
+  background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn);
+  font-family:var(--mono);font-weight:600;letter-spacing:.05em;cursor:pointer}
+.lock-btn:hover{background:color-mix(in srgb,var(--warn) 26%,transparent)}
 
 .app{height:100vh;display:grid;grid-template-rows:auto auto 1fr;gap:var(--pad);padding:var(--pad)}
 
@@ -260,6 +279,18 @@ input[type=range]{width:100%;accent-color:var(--warn);cursor:pointer}
 </head>
 <body>
 <a href="#main" class="sr-only">Skip to controls</a>
+
+<div class="lock" id="lock" role="dialog" aria-modal="true" aria-label="Operator authentication">
+  <div class="lock-box">
+    <div class="lock-tag">SIS-01</div>
+    <h2>Operator authentication</h2>
+    <p class="lock-hint">Enter the 4-digit PIN shown in the server console.</p>
+    <input id="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"
+           aria-label="Operator PIN" placeholder="••••">
+    <div class="lock-msg" id="lock-msg" role="status" aria-live="polite"></div>
+    <button class="lock-btn" id="lock-btn">Unlock</button>
+  </div>
+</div>
 <div class="app">
 
   <div class="bar">
@@ -553,6 +584,19 @@ socket.on('attack_findings', d => {
     if (st) { st.textContent = f.status; st.className = 'st ' + (f.status === 'DEFENDED' ? 'def' : 'na'); }
   });
 });
+
+function submitPin(){
+  const pin = $('pin').value.trim();
+  if (!/^\d{4}$/.test(pin)) { $('lock-msg').textContent = 'Enter 4 digits.'; return; }
+  socket.emit('verify_pin', {pin});
+}
+socket.on('pin_result', d => {
+  if (d.ok) { $('lock').classList.add('hidden'); }
+  else { $('lock-msg').textContent = 'Incorrect PIN.'; $('pin').value=''; $('pin').focus(); }
+});
+$('lock-btn').addEventListener('click', submitPin);
+$('pin').addEventListener('keydown', e => { if (e.key === 'Enter') submitPin(); });
+window.addEventListener('load', () => $('pin').focus());
 
 socket.on('connect', () => {
   $('conn').classList.add('on'); $('conn-text').textContent = 'Connected';

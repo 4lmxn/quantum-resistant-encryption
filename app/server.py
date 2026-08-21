@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import secrets
 import time
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -74,6 +75,11 @@ class CentralServer:
         # constrained node is one physical box with one enrolled identity.
         self.http_pending = {}   # handshake_id -> (role, dk, ek, device_id)
         self.http_sessions = {}  # device_id -> session_key
+        # A fresh 4-digit operator PIN each server run, revealed only in the
+        # console. The dashboard is a view; this gates it to whoever has console
+        # access, and it rotates on every restart so a shoulder-surfed PIN dies
+        # with the process.
+        self.dashboard_pin = f"{secrets.randbelow(10000):04d}"
         self.findings = {}  # attack id -> last structured result
         # What a passive interceptor would hold for the legacy RSA channel:
         # the public key, the wrapped session key, and one captured packet.
@@ -922,6 +928,16 @@ def broadcast_sis_state():
     })
 
 
+@socketio.on("verify_pin")
+def handle_verify_pin(data):
+    """Checks the operator PIN. Constant-time compare, and never echoes the PIN."""
+    supplied = str((data or {}).get("pin", ""))
+    ok = secrets.compare_digest(supplied, server_engine.dashboard_pin)
+    emit("pin_result", {"ok": ok})
+    if not ok:
+        log("ERROR", "[HMI] Dashboard unlock refused: wrong operator PIN.")
+
+
 @socketio.on("dashboard_ready")
 def handle_dashboard_ready():
     """A dashboard that connects mid-run still needs the current state."""
@@ -965,4 +981,8 @@ if __name__ == "__main__":
             # The Socket.IO demo must survive a missing broker.
             print(f"[SERVER] MQTT bridge unavailable ({exc}). Socket.IO only.")
 
+    print("=" * 44)
+    print(f"  DASHBOARD PIN: {server_engine.dashboard_pin}")
+    print("  Enter it on the HMI to unlock. New PIN every run.")
+    print("=" * 44)
     socketio.run(app, host=SERVER_HOST, port=SERVER_PORT, debug=False, allow_unsafe_werkzeug=True)
