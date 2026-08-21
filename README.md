@@ -110,10 +110,12 @@ command when:
 A correctly signed request to move the trip setpoint by sixty degrees is refused
 exactly like an unsigned one.
 
-**The unsigned handlers still exist, and always refuse.** `set_threshold`,
-`toggle_actuator_override` and `resume_automatic` are kept in the server so the
-demonstration can show the unsigned path being turned away next to the signed one
-working. They are not dead code awaiting repair — the refusal is the point.
+**There is no unsigned control path.** The dashboard is a safety-controller HMI:
+it shows state and carries a manual emergency-shutdown button — tripping is the
+fail-safe direction, so an operator may always trip without a second key — but
+every action that *reduces* safety (moving the setpoint, clearing a trip,
+asserting a bypass) is only reachable through the signed `make operator` path.
+The old unsigned dashboard handlers were removed, not left as refusing stubs.
 
 **The ESP32 is on the basic process control lane, not the safety lane.** It runs
 on a provisioned pre-shared key rather than the ML-KEM/ML-DSA handshake, so its
