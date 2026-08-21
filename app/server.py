@@ -348,6 +348,26 @@ def heartbeat_loop():
             socketio.emit("sis_heartbeat", packet, to=actuator_sid)
 
 
+def sync_actuator_state(actuator_sid):
+    """Seals the current authoritative valve command to one actuator.
+
+    TRIP if the safety function is latched, RESET otherwise. Called on handshake
+    so a reconnecting actuator is brought into step with the server, which is the
+    authority -- a restarted server that comes up HEALTHY reopens a valve the
+    actuator had closed on a lost heartbeat, and a still-tripped server re-closes
+    one that restarted OPEN.
+    """
+    key = server_engine.actuator_keys.get(actuator_sid)
+    if key is None:
+        return
+    command = "TRIP" if server_engine.trip_state == "TRIPPED" else "RESET"
+    packet = server_engine.encrypt_actuator_command(key, command)
+    server_engine.last_command_packet = packet
+    _dispatch_to_actuator(actuator_sid, packet)
+    log("ALERT", f"[SIS] Re-syncing reconnected actuator to {command} "
+                 f"(valve should be {valve_position()}).")
+
+
 def send_actuator_command(command_str):
     """Seals one command per actuator, each under that actuator's own session key."""
     for actuator_sid, actuator_key in list(server_engine.actuator_keys.items()):
@@ -537,6 +557,13 @@ def handle_pqc_encapsulation(data):
         log("ERROR", f"[PQC] {role.upper()} key disagreement. Node and server derived different keys.")
     broadcast_pqc_status()
     emit("pqc_established", {"role": role})
+    if role == "actuator" and record["agreed"]:
+        # Re-assert the authoritative valve state to a freshly-connected actuator.
+        # A reconnecting node -- after a server restart, or a dropped link that
+        # made its watchdog trip -- must be told where the valve should be, or it
+        # sits latched CLOSED with nothing able to reach it. Standard SIS practice:
+        # the controller re-asserts its outputs on every reconnect.
+        sync_actuator_state(request.sid)
 
 
 @socketio.on("sensor_telemetry_event")
