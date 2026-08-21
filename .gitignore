@@ -11,3 +11,4 @@ identities/
 # and it is also the warm object cache that makes a rebuild ~18s. Ignore it,
 # do not delete it.
 firmware/sketch/build/
+firmware/pqc_selftest/build/

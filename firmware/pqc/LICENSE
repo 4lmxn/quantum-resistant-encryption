@@ -1,0 +1,13 @@
+The ML-KEM-768 and ML-DSA-65 C sources in this directory are vendored from
+PQClean (https://github.com/PQClean/PQClean), which places its clean reference
+implementations in the public domain (CC0 1.0), with the ML-KEM/ML-DSA reference
+code derived from the CRYSTALS-Kyber and CRYSTALS-Dilithium teams' public-domain
+releases.
+
+Files renamed with a `d_` prefix are the ML-DSA-65 sources, renamed only to avoid
+filename collisions with the ML-KEM-768 sources in the same flat Arduino library
+directory; their contents are unmodified except for the corresponding include
+paths. `randombytes.c` is original to this project (ESP32 hardware RNG on device,
+/dev/urandom on host).
+
+See https://github.com/PQClean/PQClean/blob/master/LICENSE for the full terms.

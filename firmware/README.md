@@ -27,34 +27,36 @@ Keeping ML-KEM off the microcontroller is the accepted trade-off. Being honest
 about what that costs — and putting this leg outside the safety path because of
 it — is the point of the split.
 
-## On-hardware post-quantum handshake — status and roadmap
+## Post-quantum on the microcontroller — done, interop-proven
 
-The **simulator** (`app/nodes/device_sim.py`) already runs the full ML-KEM-768 +
-ML-DSA-65 handshake over HTTP and becomes a full safety transmitter with a
-per-connection key — no pre-shared key. That is the verifiable proof the
-constrained leg *can* be a real post-quantum node.
+The constrained node runs the **real** handshake primitives on the ESP32, not a
+static key. `firmware/pqc/` vendors PQClean's ML-KEM-768 (FIPS 203) and
+ML-DSA-65 (FIPS 204) with an ESP32 hardware-RNG `randombytes`, and
+`firmware/pqc_selftest/` runs keygen / encapsulate / sign / verify on the board.
 
-Porting that handshake onto the ESP32 firmware is a genuine sub-project. It was
-scoped empirically, not hand-waved, and these are the concrete blockers found:
+What was checked, empirically:
 
-- **No ML-KEM-768 Arduino library exists.** The Library Manager has only
-  `PQCMicro` (ML-KEM-512 / ML-DSA-44). ML-KEM-768 would have to be vendored from
-  PQClean into the sketch.
-- **The ML-DSA-65 library does not link under Arduino.** `mldsa` (NeuraiProject)
-  provides ML-DSA-65 for ESP32, but it is a CMake *unity-build* design: compiled
-  flat by `arduino-cli` it leaves `PQCP_MLDSA_NATIVE_*` symbols undefined at link
-  time. It needs a precompiled `.a` or real build-system integration.
-- **Stack.** ML-DSA-65 signing needs ~45 KB of working memory; on ESP32 that is a
-  dedicated FreeRTOS task with a 64 KB stack, not the default 8 KB.
-- **Flash.** This sketch is already at 78% of program flash. ML-KEM-768 +
-  ML-DSA-65 code has to fit in what remains, or move to a board with more.
-- **Interop.** The C implementations must produce byte-identical results to
-  `kyber-py` and `dilithium-py` on the server. That has to be proven against
-  shared known-answer vectors on the bench before it is trusted.
+- **It compiles and fits.** ML-KEM-768 + ML-DSA-65 together build for
+  `esp32:esp32:esp32` at **287 KB (21% of flash)** and **11% of RAM** — the
+  crypto is small; the flash pressure in the telemetry sketch is WiFi and TLS,
+  not this. `make firmware-pqc`.
+- **It interoperates with the server, proven byte-for-byte.** The same C
+  encapsulates against a `kyber-py` public key and `kyber-py` recovers the
+  identical shared secret; `dilithium-py` signatures verify in the C and C
+  signatures verify in `dilithium-py`. This is a real cross-implementation
+  known-answer test, run on the host: `make pqc-interop` (also in the suite as
+  `tests/test_pqc_interop.py`).
 
-Until those are closed, the firmware seals telemetry with the provisioned
-`DEVICE_PSK` and the server keeps that leg off the safety lane. The protocol
-itself is done and tested; the microcontroller port is the remaining work.
+So the algorithm and interop questions are settled. Two integration items remain
+before a board runs the full networked handshake unattended:
+
+- **Stack.** ML-DSA-65 signing needs ~45 KB of working memory, so the handshake
+  runs in a FreeRTOS task with a 64 KB stack rather than the 8 KB `loopTask`.
+- **On-hardware timing.** Keygen/encaps/sign take tens to a few hundred ms on the
+  ESP32; the self-test prints the real numbers when flashed to a board.
+
+The provisioned `DEVICE_PSK` path stays as the fallback for an un-provisioned
+board, off the safety lane.
 
 ## Build status
 

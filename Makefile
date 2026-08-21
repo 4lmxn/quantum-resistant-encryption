@@ -3,7 +3,7 @@ PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
-        firmware firmware-setup sensor-legacy enroll bench operator
+        firmware firmware-pqc pqc-interop firmware-setup sensor-legacy enroll bench operator
 
 help:
 	@echo "Setup:"
@@ -83,6 +83,7 @@ test:
 	$(PY) -m tests.test_command_replay
 	$(PY) -m tests.test_actuator_resync
 	$(PY) -m tests.test_http_handshake
+	$(PY) -m tests.test_pqc_interop
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:
@@ -91,6 +92,12 @@ test-device:
 firmware:           ## compile the ESP32 sketch (needs arduino-cli + esp32 core)
 	arduino-cli compile --fqbn esp32:esp32:esp32 --warnings all firmware/sketch
 	@echo "Built. Simulate locally: open firmware/wokwi.toml, F1 -> Wokwi: Start Simulator"
+
+firmware-pqc:       ## compile the on-device ML-KEM-768 + ML-DSA-65 self-test
+	arduino-cli compile --fqbn esp32:esp32:esp32 --library firmware/pqc firmware/pqc_selftest
+
+pqc-interop:        ## prove the vendored C interoperates with kyber-py / dilithium-py
+	$(PY) -m tests.test_pqc_interop && echo "PASS interop"
 
 firmware-setup:     ## one-time toolchain install for the firmware target
 	brew install arduino-cli
