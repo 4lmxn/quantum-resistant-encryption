@@ -12,3 +12,4 @@ identities/
 # do not delete it.
 firmware/sketch/build/
 firmware/pqc_selftest/build/
+firmware/sketch_pqc/keys.h

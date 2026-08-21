@@ -1,0 +1,8 @@
+// Template. The real keys.h is generated (and gitignored) by:
+//   make enroll && make firmware-keys
+// It holds the device's ML-DSA-65 secret key and the server's public key, as C
+// arrays, flashed into the board at commissioning. Do not commit the generated one.
+#pragma once
+#define DEVICE_ID "esp32-01"
+static const uint8_t DEVICE_SECRET[4032] = { /* 4032 bytes, from make firmware-keys */ };
+static const uint8_t SERVER_PUBLIC[1952] = { /* 1952 bytes, from make firmware-keys */ };

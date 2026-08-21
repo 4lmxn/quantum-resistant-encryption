@@ -132,13 +132,16 @@ the **real** handshake primitives, and this was proven — not asserted:
   `make pqc-interop`.
 - **✅ Fits the chip.** ML-KEM-768 + ML-DSA-65 compile for the ESP32 at **287 KB
   (21% of flash), 11% RAM**. `make firmware-pqc`.
-- **The Python ESP32 stand-in does the full handshake today** over HTTP and
-  becomes a full safety transmitter — no pre-shared key.
+- **✅ The full handshake firmware exists and compiles.**
+  `firmware/sketch_pqc/` runs the whole ML-KEM + ML-DSA handshake on the ESP32
+  (in a 64 KB FreeRTOS task), at **79% flash**. `make firmware-pqc-node`.
+- **✅ Proven end-to-end against the live server.** The firmware's exact C crypto,
+  driven through the real `/pqc/hello` and `/pqc/encapsulate` endpoints, makes
+  the server answer `agreed: true` — the keys match. `make test` runs this
+  (`tests/test_firmware_e2e.py`).
 
-> **Remaining:** wiring the on-device handshake into the networked telemetry
-> sketch (a 64 KB task for ML-DSA signing + on-hardware timing). Integration, not
-> unknowns. Until then the firmware uses a **runtime-provisioned** key that is
-> **never committed** — `make enroll` generates and prints it.
+> **Left to hardware:** only flashing it to a physical board for the WiFi/HTTP
+> transport and real timing. The crypto and the protocol are proven.
 
 ---
 
@@ -274,9 +277,10 @@ Found by **attacking the running system**, not by reasoning about it.
 
 **Still open** 🔶
 
-- **On-hardware handshake integration.** The firmware crypto is proven; wiring it
-  into the networked telemetry sketch (FreeRTOS task + timing) is the remaining
-  work. The runtime PSK is the fallback until then.
+- **Physical-board flashing.** The handshake firmware compiles and its crypto is
+  proven end-to-end against the live server; it has not been flashed to a real
+  ESP32 for the WiFi transport and on-hardware timing. The simulator covers
+  everything else.
 - **Server signing key at rest.** `identities/` is mode 0600 and gitignored, but
   a real deployment puts the ML-DSA key in an **HSM or secure element** — not yet
   wired.

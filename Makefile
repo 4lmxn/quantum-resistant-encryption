@@ -3,7 +3,7 @@ PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
-        firmware firmware-pqc pqc-interop firmware-setup sensor-legacy enroll bench operator
+        firmware firmware-pqc firmware-pqc-node firmware-keys pqc-interop firmware-setup sensor-legacy enroll bench operator
 
 help:
 	@echo "Setup:"
@@ -84,6 +84,7 @@ test:
 	$(PY) -m tests.test_actuator_resync
 	$(PY) -m tests.test_http_handshake
 	$(PY) -m tests.test_pqc_interop
+	$(PY) -m tests.test_firmware_e2e
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:
@@ -95,6 +96,12 @@ firmware:           ## compile the ESP32 sketch (needs arduino-cli + esp32 core)
 
 firmware-pqc:       ## compile the on-device ML-KEM-768 + ML-DSA-65 self-test
 	arduino-cli compile --fqbn esp32:esp32:esp32 --library firmware/pqc firmware/pqc_selftest
+
+firmware-keys:      ## emit the ESP32's flashable identity (needs make enroll first)
+	$(PY) -m scripts.emit_firmware_keys
+
+firmware-pqc-node:  ## compile the full handshake firmware (needs make firmware-keys)
+	arduino-cli compile --fqbn esp32:esp32:esp32 --library firmware/pqc firmware/sketch_pqc
 
 pqc-interop:        ## prove the vendored C interoperates with kyber-py / dilithium-py
 	$(PY) -m tests.test_pqc_interop && echo "PASS interop"

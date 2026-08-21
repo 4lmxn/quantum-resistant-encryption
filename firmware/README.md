@@ -47,16 +47,27 @@ What was checked, empirically:
   known-answer test, run on the host: `make pqc-interop` (also in the suite as
   `tests/test_pqc_interop.py`).
 
-So the algorithm and interop questions are settled. Two integration items remain
-before a board runs the full networked handshake unattended:
+**The full handshake firmware is built.** `firmware/sketch_pqc/` runs the whole
+ML-KEM-768 + ML-DSA-65 handshake on the ESP32 -- in a 64 KB FreeRTOS task,
+because ML-DSA-65 signing needs ~45 KB of stack -- derives the session key with
+SHAKE-256 + HKDF-SHA256 exactly as the server does, and seals telemetry with it.
+It compiles at 79% of flash (`make firmware-pqc-node`).
 
-- **Stack.** ML-DSA-65 signing needs ~45 KB of working memory, so the handshake
-  runs in a FreeRTOS task with a 64 KB stack rather than the 8 KB `loopTask`.
-- **On-hardware timing.** Keygen/encaps/sign take tens to a few hundred ms on the
-  ESP32; the self-test prints the real numbers when flashed to a board.
+Provision and build:
 
-The provisioned `DEVICE_PSK` path stays as the fallback for an un-provisioned
-board, off the safety lane.
+```bash
+make enroll          # generates the esp32-01 identity + server key
+make firmware-keys   # emits firmware/sketch_pqc/keys.h (gitignored; holds the device secret)
+make firmware-pqc-node
+```
+
+It is proven end-to-end against the running server: `tests/test_firmware_e2e.py`
+drives the firmware's exact C crypto through the real /pqc endpoints and the
+server answers `agreed: true`. The only thing left to a physical board is the
+WiFi/HTTP transport and the real timing numbers.
+
+The runtime-provisioned `DEVICE_PSK` path stays as the fallback for an
+un-provisioned board (`firmware/sketch/`), off the safety lane.
 
 ## Build status
 
