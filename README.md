@@ -16,10 +16,6 @@ read this"* but **"what happens when someone is already inside."**
 
 ![Dashboard](docs/dashboard.png)
 
----
-
-## The one-paragraph version
-
 - **Sensor → server → valve.** Three parts, each a real node.
 - **Every link is post-quantum.** Keys agreed with ML-KEM-768, identities and
   commands signed with ML-DSA-65, data sealed with AES-256-GCM.
