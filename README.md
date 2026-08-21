@@ -212,6 +212,29 @@ make test-device  # ESP32 wire format (server must be running)
 
 ---
 
+## Optional: server key in an HSM
+
+The server's ML-DSA-65 signing key can live in a **PKCS#11 HSM** instead of the
+gitignored file. Demonstrated with the free **SoftHSM2**:
+
+```bash
+brew install softhsm
+softhsm2-util --init-token --slot 0 --label sis01-server --so-pin 3737 --pin 2415
+export SIS_HSM_MODULE=/opt/homebrew/lib/softhsm/libsofthsm2.so
+export SIS_HSM_TOKEN=sis01-server
+export SIS_HSM_PIN=2415
+
+pip install python-pkcs11
+make enroll                    # generates the key in the file
+make hsm-import                # copy it into the HSM
+make hsm-import ARGS=--scrub   # (optional) then wipe it from the file — HSM-only
+```
+
+- With `SIS_HSM_*` set, the server loads its key from the token behind the PIN.
+- **No HSM does ML-DSA natively**, so the key is a login-protected data object
+  and the server signs in software — protecting the key at rest **without** adding
+  a classical algorithm to the security path.
+
 ## Hardware
 
 - `firmware/` holds the ESP32 sketch, wiring, and setup notes.
@@ -281,9 +304,11 @@ Found by **attacking the running system**, not by reasoning about it.
   proven end-to-end against the live server; it has not been flashed to a real
   ESP32 for the WiFi transport and on-hardware timing. The simulator covers
   everything else.
-- **Server signing key at rest.** `identities/` is mode 0600 and gitignored, but
-  a real deployment puts the ML-DSA key in an **HSM or secure element** — not yet
-  wired.
+- **Server signing key in a hardware element.** The key can now live in a
+  **PKCS#11 HSM** (`app/keystore.py`) — point `SIS_HSM_*` at a token and the
+  server loads its ML-DSA key from there instead of the file. Wired and tested
+  against **SoftHSM2** (free); production would use a hardware token. What is left
+  is a real hardware device rather than the software HSM.
 - **Attack 1's quantum step is cited, not simulated** — it factors a deliberately
   small RSA modulus so the classical break completes in milliseconds.
 

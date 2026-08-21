@@ -9,3 +9,6 @@ requests>=2.31
 # MQTT over TLS 1.3 transport (report §3.1)
 paho-mqtt>=2.1
 amqtt>=0.12
+
+# Optional — only for storing the server key in a PKCS#11 HSM (make hsm-import)
+# python-pkcs11>=0.9

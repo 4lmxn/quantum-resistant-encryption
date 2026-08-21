@@ -96,16 +96,24 @@ class IdentityRegistry:
             return False
         raw = json.loads(self.path.read_text())
         self.server_public = bytes.fromhex(raw["server"]["public"])
-        self.server_secret = bytes.fromhex(raw["server"]["secret"])
+        # The signing secret comes from the HSM when SIS_HSM_* is set, else from
+        # the file. The file may have an empty secret once it has been imported
+        # into the HSM and scrubbed -- see scripts/hsm_import.
+        from app import keystore
+        self.server_secret = keystore.load_server_secret(raw["server"].get("secret"))
         self.devices = {k: bytes.fromhex(v) for k, v in raw["devices"].items()}
         return True
 
-    def save(self):
+    def save(self, secret_hex=None):
+        """Writes the registry. `secret_hex` overrides what goes in the secret
+        field, so the importer can scrub it (write "") once the key is in the HSM."""
+        if secret_hex is None:
+            secret_hex = self.server_secret.hex() if self.server_secret else ""
         self.path.write_text(json.dumps({
-            "server": {"public": self.server_public.hex(), "secret": self.server_secret.hex()},
+            "server": {"public": self.server_public.hex(), "secret": secret_hex},
             "devices": {k: v.hex() for k, v in self.devices.items()},
         }, indent=2))
-        os.chmod(self.path, 0o600)  # contains the server's signing key
+        os.chmod(self.path, 0o600)  # may contain the server's signing key
 
     def bootstrap(self, device_ids):
         """Creates the server identity and enrols the listed devices.

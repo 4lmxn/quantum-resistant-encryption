@@ -3,7 +3,7 @@ PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
-        firmware firmware-pqc firmware-pqc-node firmware-keys pqc-interop firmware-setup sensor-legacy enroll bench operator
+        firmware firmware-pqc firmware-pqc-node firmware-keys pqc-interop firmware-setup sensor-legacy enroll bench operator hsm-import
 
 help:
 	@echo "Setup:"
@@ -35,6 +35,9 @@ enroll:             ## create server + device ML-DSA identities (once)
 
 bench:              ## measure what the post-quantum primitives cost
 	$(PY) bench.py
+
+hsm-import:         ## move the server signing key into a PKCS#11 HSM (SIS_HSM_* set)
+	$(PY) -m scripts.hsm_import $(ARGS)
 
 operator:           ## signed operator console — the only way to move the setpoint
 	@echo 'usage: make operator ARGS="setpoint 85" | ARGS=reset | ARGS="bypass on"'
@@ -85,6 +88,7 @@ test:
 	$(PY) -m tests.test_http_handshake
 	$(PY) -m tests.test_pqc_interop
 	$(PY) -m tests.test_firmware_e2e
+	$(PY) -m tests.test_hsm
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:
