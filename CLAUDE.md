@@ -166,18 +166,21 @@ The nonce is burned only once the signature checks out. Burning it earlier would
 let an attacker spend a legitimate operator's nonce by sending garbage carrying
 it.
 
-### The refusing handlers are the demonstration — do not fix them
+### No unsigned control path exists — do not add one back
 
-`set_threshold`, `toggle_actuator_override` and `resume_automatic` still exist
-in `app/server.py` and **always refuse**, emitting a red `security_log`.
+The dashboard was reskinned as a safety-controller HMI, and the old unsigned
+`set_threshold`, `toggle_actuator_override` and `resume_automatic` handlers were
+**removed entirely**. They previously stayed as always-refusing stubs to
+demonstrate the unsigned path being turned away, but a real controller screen
+does not carry a control that only exists to be refused, so they are gone.
 
-**Do not delete them, and do not make them work again.** They are how the demo
-shows the unsigned path being turned away beside the signed one working. The
-override in particular used to emit a properly sealed command, so the actuator
-authenticated it correctly and obeyed — which proved the *server* had sent it,
-and nothing about who had asked. That gap is the point. A future dashboard
-control that needs to change safety state belongs on the signed
-`operator_command` path, not restored here.
+**Do not restore them.** Every action that reduces safety — moving the setpoint,
+clearing a trip, asserting a bypass — belongs on the signed `operator_command`
+path (`make operator`). The one exception is the **manual ESD**
+(`manual_trip`), which genuinely acts from the dashboard: tripping is the
+fail-safe direction, so an operator hitting the emergency stop needs no second
+key, exactly as in a real control room. Do not give any *reducing-safety*
+action that same unauthenticated treatment.
 
 ### Nodes cannot reach the dashboard directly
 

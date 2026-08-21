@@ -693,34 +693,6 @@ def handle_manual_trip():
     broadcast_sis_state()
 
 
-@socketio.on("toggle_actuator_override")
-def handle_toggle_actuator_override():
-    """Kept, and now always refused.
-
-    This used to flip the final element on an unauthenticated dashboard message.
-    The command it emitted was properly sealed, so the actuator authenticated it
-    correctly and obeyed -- which proved the server had sent it, and nothing
-    about who had asked. It stays here, refusing, so the demonstration can show
-    the unsigned path being turned away beside the signed one working.
-    """
-    log("ERROR", "[SIS] Refused: unsigned override from the dashboard. "
-                 "Safety actions need a signed operator command — run: make operator")
-
-
-@socketio.on("set_threshold")
-def handle_set_threshold(data):
-    """Kept, and now always refused. See handle_toggle_actuator_override."""
-    log("ERROR", "[SIS] Refused: unsigned setpoint change from the dashboard. "
-                 "This is the Oldsmar path — a legitimate control channel with "
-                 "nobody proving who used it.")
-
-
-@socketio.on("resume_automatic")
-def handle_resume_automatic():
-    """Kept, and now always refused: clearing a bypass is an operator action."""
-    log("ERROR", "[SIS] Refused: unsigned bypass change from the dashboard.")
-
-
 OPERATOR_ACTIONS = ("SET_SETPOINT", "RESET", "BYPASS_ON", "BYPASS_OFF")
 
 
