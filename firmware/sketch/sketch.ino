@@ -10,8 +10,8 @@
  *
  * It is deliberately NOT on the safety path. The ML-KEM-768 handshake and the
  * ML-DSA-65 identity proof run on the Python nodes; this board holds only the
- * provisioned DEVICE_PSK from config.py. A committed pre-shared key is not an
- * authenticated identity, so the server marks this telemetry
+ * provisioned device key. A static provisioning key is not an authenticated
+ * identity, so the server marks this telemetry
  * safety_relevant=false: it is displayed and logged, and it can never trip the
  * plant. The safety loop trips on the sensor node's reading, and XV-101 is
  * driven by the actuator node — never from here.
@@ -79,10 +79,14 @@ static const char *TELEMETRY_URL = "https://REPLACE-ME.trycloudflare.com/telemet
 static const char *TELEMETRY_URL = "http://host.wokwi.internal:5001/telemetry";
 #endif
 
-// Must be byte-identical to DEVICE_PSK in config.py (32 bytes, AES-256).
+// Provisioning key. Run `make enroll` on the server: it generates a random
+// 32-byte key, prints it as hex, and stores it under identities/ (gitignored).
+// Paste those 32 bytes here at commissioning. This placeholder is all zeros on
+// purpose -- it will NOT match the server until you provision it, which is the
+// point: no working key ships in the firmware.
 static const uint8_t DEVICE_PSK[32] = {
-    'e', 's', 'p', '3', '2', '_', 'p', 'r', 'o', 'v', 'i', 's', 'i', 'o', 'n', 'e',
-    'd', '_', 'a', 'e', 's', '2', '5', '6', '_', 'k', 'e', 'y', '_', '3', '2', 'B'};
+    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0};
 
 // Which transmitter this board is. Appears on the dashboard and audit trail.
 static const char *UNIT_ID = "TT-101";

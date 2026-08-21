@@ -6,13 +6,52 @@ import pathlib
 # Sensor and actuator session keys are NOT set here any more. They are agreed
 # per connection by the ML-KEM-768 handshake in pqc.py.
 
-# Provisioned pre-shared key for the constrained ESP32 node only. A
-# microcontroller flashed at the factory has no handshake partner at boot, so
-# this leg falls back to a burned-in key. Exactly 32 bytes for AES-256-GCM.
-# WARNING: this is a demo key committed to the repository, so anyone reading the
-# source can forge ESP32 telemetry. Override it in any real deployment:
-#   export DEVICE_PSK="<32 bytes>"
-DEVICE_PSK = os.environ.get("DEVICE_PSK", "esp32_provisioned_aes256_key_32B").encode()
+# Provisioned pre-shared key for the constrained ESP32 node. A microcontroller
+# flashed at the factory has no handshake partner at boot, so this leg falls
+# back to a provisioned key. Exactly 32 bytes for AES-256-GCM.
+#
+# It is NOT committed. Nothing in the repository can forge ESP32 telemetry,
+# because the key is generated at runtime and persisted only to the gitignored
+# provisioning directory. `make enroll` generates and prints it, and a real
+# board is flashed with that value at commissioning -- genuine provisioning, not
+# a shared secret hiding in the source.
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_PSK_PATH = PROJECT_ROOT / "identities" / "device.psk"
+
+
+def load_or_provision_device_psk():
+    """Returns the 32-byte device PSK, generating and persisting it once.
+
+    Precedence: an explicit DEVICE_PSK env var, else the provisioning file, else
+    a freshly generated key written to that file so every process in this
+    deployment (server, simulator) reads the same one. The file lives under the
+    gitignored identities/ directory, so the key never enters version control.
+    """
+    env = os.environ.get("DEVICE_PSK")
+    if env is not None:
+        key = env.encode()
+        assert len(key) == 32, "DEVICE_PSK env var must be exactly 32 bytes for AES-256"
+        return key
+
+    if _PSK_PATH.exists():
+        return bytes.fromhex(_PSK_PATH.read_text().strip())
+
+    key = os.urandom(32)
+    _PSK_PATH.parent.mkdir(exist_ok=True)
+    try:
+        # First writer wins: a concurrent import must not clobber the key another
+        # process already generated, or the two would seal with different keys.
+        with open(_PSK_PATH, "x") as f:
+            f.write(key.hex())
+        os.chmod(_PSK_PATH, 0o600)
+        print(f"[config] provisioned a fresh device PSK at {_PSK_PATH}")
+        print(f"[config] flash this into a real ESP32: {key.hex()}")
+    except FileExistsError:
+        key = bytes.fromhex(_PSK_PATH.read_text().strip())
+    return key
+
+
+DEVICE_PSK = load_or_provision_device_psk()
 assert len(DEVICE_PSK) == 32, "DEVICE_PSK must be exactly 32 bytes for AES-256"
 
 # ---------------------------------------------------------------- safety ----
@@ -45,7 +84,6 @@ SERVER_URL = "http://127.0.0.1:5001"
 MQTT_HOST = "127.0.0.1"
 MQTT_TLS_PORT = 8883
 # Absolute, so every entry point resolves them the same way regardless of cwd.
-PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CERT_DIR = PROJECT_ROOT / "certs"
 MQTT_CA_CERT = str(CERT_DIR / "ca.crt")
 

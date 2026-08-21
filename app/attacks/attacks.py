@@ -44,8 +44,9 @@ ATTACK_CATALOG = {
         "severity": "HIGH",
         "target": "The constrained monitoring node",
         "vector": "One device is too small to run the handshake, so it carries a fixed "
-                  "key that is committed to this repository. The attacker reads it out "
-                  "of the source and seals a perfectly valid reading of their choosing. "
+                  "provisioning key rather than a per-session one. Suppose the attacker "
+                  "obtains it -- from a stolen board, a dumped flash image, a careless "
+                  "commit -- and seals a perfectly valid reading of their choosing. "
                   "In 2019 a rig was shut for 19 days after malware arrived on a "
                   "worker's laptop and spread as far as the blowout preventer computer.",
         "impact": "If that node were trusted, a forged reading could trip the plant on "
@@ -415,11 +416,11 @@ def stage_silence(log, sleep, report, sever_heartbeat, heartbeat_timeout):
 def stage_psk(log, sleep, report, deliver_bpcs):
     """Real: forge a reading with the repo's committed key; show it changes nothing.
 
-    deliver_bpcs(temperature) seals a reading with DEVICE_PSK -- the key anyone
-    can read out of config.py -- and posts it on the BPCS leg exactly as the
-    ESP32 would.
+    deliver_bpcs(temperature) seals a reading with the device's provisioning key
+    and posts it on the BPCS leg exactly as the ESP32 would -- standing in for an
+    attacker who has somehow obtained that key.
     """
-    log("ATTACK", "Forge With the Leaked Key: reading DEVICE_PSK straight out of the source")
+    log("ATTACK", "Forge With the Leaked Key: sealing with a compromised device provisioning key")
     sleep(1)
     log("ATTACK", "Forge: sealing a 250°C reading with the leaked key and posting it as the ESP32")
     accepted, tripped = deliver_bpcs(250.0)

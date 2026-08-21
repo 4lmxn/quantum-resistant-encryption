@@ -243,7 +243,7 @@ def process_telemetry(data, source, packet=None, safety_relevant=True):
             "temp": data["temperature"],
             "humidity": data["humidity"],
             # Never label the BPCS leg with the KEM it does not use. That leg is
-            # sealed with the provisioned DEVICE_PSK, and saying otherwise on the
+            # sealed with the provisioned device key, and saying otherwise on the
             # dashboard would quietly undo the whole point of splitting the lanes.
             "status": "SECURE_ML_KEM_768" if safety_relevant else "SECURE_DEVICE_PSK",
             "source": source,
@@ -622,7 +622,7 @@ def _attack_sever_heartbeat(seconds):
 
 
 def _attack_deliver_bpcs(temperature):
-    """Seals a reading with the committed DEVICE_PSK and runs it through the BPCS
+    """Seals a reading with the device provisioning key and runs it through the BPCS
     leg exactly as the ESP32 would, returning (accepted, tripped_after)."""
     before = server_engine.trip_state
     data = {"temperature": temperature, "humidity": 40.0}

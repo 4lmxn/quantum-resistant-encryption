@@ -63,6 +63,10 @@ def main():
     print("Enrolled operators:")
     for operator_id in OPERATOR_IDS:
         print(f"  {operator_id:<14} secret {KEY_DIR / (operator_id + '.key')}")
+    from app.config import DEVICE_PSK, _PSK_PATH
+    print(f"\nESP32 provisioning key ({_PSK_PATH}):")
+    print(f"  {DEVICE_PSK.hex()}")
+    print("  Flash this into a real board; the Python simulator reads it from the file.")
     print("\nEach device now holds its own signing key and the server's public key.")
     print("A device without both cannot complete a handshake.")
     return 0
