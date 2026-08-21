@@ -71,9 +71,11 @@ td.no{color:var(--bad);font-weight:600}
 <header>
   <h1>SIS-01 &mdash; every key in the system, and where it comes from</h1>
   <p>The demonstrator carries four separate key relationships. Three are agreed
-  fresh on every connection and one is burned in at the factory, and the
-  difference between them decides what each link is allowed to do. These
-  diagrams show all four.</p>
+  fresh on every connection; one is provisioned at commissioning and never
+  enters the source. The difference between them decides what each link is
+  allowed to do. Nothing here is a fixed secret hiding in the repository &mdash;
+  every key is either generated per session or provisioned at runtime. These
+  diagrams show all four, and every signature that protects them.</p>
   <div class="meta">
     <span>ML-KEM-768 &middot; FIPS 203</span>
     <span>ML-DSA-65 &middot; FIPS 204</span>
@@ -82,13 +84,75 @@ td.no{color:var(--bad);font-weight:600}
   </div>
 </header>
 
+<!-- ============ FIGURE 0 ============ -->
+<figure>
+  <div class="fignum">Figure 0</div>
+  <h2>Provisioning &mdash; where every key is born</h2>
+  <div class="frame">
+  <svg viewBox="0 0 1000 300" role="img"
+       aria-label="make enroll runs once. It generates an ML-DSA-65 keypair for the server and one for each device and operator, writes each secret to the gitignored identities directory, and generates a random 32-byte device PSK persisted to the same place. Nothing is committed. Each device is then flashed or handed its own secret.">
+    <defs>
+      <marker id="a0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <rect x="30" y="120" width="200" height="70" rx="8" fill="var(--crypto-bg)" stroke="var(--crypto)" stroke-width="1.5"/>
+    <text x="130" y="150" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">make enroll</text>
+    <text x="130" y="170" text-anchor="middle" font-size="10.5" class="m" fill="var(--ink-2)">runs once, at commissioning</text>
+
+    <!-- outputs -->
+    <g font-size="11" text-anchor="start">
+      <rect x="360" y="20" width="270" height="56" rx="6" fill="var(--card)" stroke="var(--rule)"/>
+      <text x="374" y="42" font-size="12.5" font-weight="700" fill="var(--ink)">Server ML-DSA-65 keypair</text>
+      <text x="374" y="61" class="m" fill="var(--ink-2)">public + secret &middot; signs every KEM offer</text>
+
+      <rect x="360" y="90" width="270" height="56" rx="6" fill="var(--card)" stroke="var(--rule)"/>
+      <text x="374" y="112" font-size="12.5" font-weight="700" fill="var(--ink)">Per-device ML-DSA-65 keypairs</text>
+      <text x="374" y="131" class="m" fill="var(--ink-2)">sensor, actuator &middot; each signs its handshake</text>
+
+      <rect x="360" y="160" width="270" height="56" rx="6" fill="var(--card)" stroke="var(--rule)"/>
+      <text x="374" y="182" font-size="12.5" font-weight="700" fill="var(--ink)">Operator ML-DSA-65 keypair</text>
+      <text x="374" y="201" class="m" fill="var(--ink-2)">signs setpoint / reset / bypass</text>
+
+      <rect x="360" y="230" width="270" height="56" rx="6" fill="var(--sense-bg)" stroke="var(--sense)"/>
+      <text x="374" y="252" font-size="12.5" font-weight="700" fill="var(--ink)">Random 32-byte device PSK</text>
+      <text x="374" y="271" class="m" fill="var(--sense)">generated at runtime &middot; not per-session</text>
+    </g>
+
+    <g stroke="var(--crypto)" stroke-width="1.6" marker-end="url(#a0)" color="var(--crypto)" fill="none">
+      <path d="M230 140 C 300 48, 320 48, 356 48"/>
+      <path d="M230 150 C 300 118, 320 118, 356 118"/>
+      <path d="M230 165 C 300 188, 320 188, 356 188"/>
+      <path d="M230 175 C 300 258, 320 258, 356 258"/>
+    </g>
+
+    <!-- vault -->
+    <rect x="720" y="90" width="250" height="120" rx="8" fill="var(--act-bg)" stroke="var(--act)" stroke-width="1.5"/>
+    <text x="845" y="126" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ink)">identities/ &nbsp;(gitignored)</text>
+    <text x="845" y="150" text-anchor="middle" font-size="11" class="m" fill="var(--ink-2)">secrets at 0600, never committed</text>
+    <text x="845" y="176" text-anchor="middle" font-size="11" class="m" fill="var(--act)">server + simulator read from here</text>
+    <text x="845" y="196" text-anchor="middle" font-size="11" class="m" fill="var(--act)">real board flashed with the PSK</text>
+    <g stroke="var(--act)" stroke-width="1.6" marker-end="url(#a0)" color="var(--act)" fill="none">
+      <line x1="630" y1="118" x2="716" y2="140"/>
+      <line x1="630" y1="258" x2="716" y2="176"/>
+    </g>
+  </svg>
+  </div>
+  <figcaption><b>One command, run once.</b> <code>make enroll</code> generates every
+  long-term key and the random device PSK, and writes them all to the gitignored
+  <code>identities/</code> directory &mdash; nothing is hard-coded and nothing is
+  committed. A real ESP32 is flashed with the printed PSK at commissioning; the
+  firmware ships with an all-zero placeholder that cannot talk to the server until
+  it is provisioned.</figcaption>
+</figure>
+
 <!-- ============ FIGURE 1 ============ -->
 <figure>
   <div class="fignum">Figure 1</div>
   <h2>System block diagram &mdash; who holds which key</h2>
   <div class="frame">
   <svg viewBox="0 0 1000 470" role="img"
-       aria-label="TT-101 and XV-101 each agree their own ML-KEM-768 session key with the logic solver and prove identity with ML-DSA-65. The operator console signs commands with its own long-term ML-DSA key. The ESP32 monitoring transmitter uses a burned-in pre-shared key and its readings cannot reach the safety decision.">
+       aria-label="TT-101 and XV-101 each agree their own ML-KEM-768 session key with the logic solver and prove identity with ML-DSA-65. The operator console signs commands with its own long-term ML-DSA key. The ESP32 monitoring transmitter uses a device PSK provisioned at runtime and never committed, and its readings cannot reach the safety decision.">
     <defs>
       <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
         <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -145,8 +209,8 @@ td.no{color:var(--bad);font-weight:600}
     <!-- esp32 -->
     <rect x="30" y="360" width="270" height="80" rx="3" fill="var(--card)" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="5 4"/>
     <text x="165" y="388" text-anchor="middle" font-size="14" font-weight="600" fill="var(--ink)">ESP32 monitoring node</text>
-    <text x="165" y="407" text-anchor="middle" font-size="11.5" fill="var(--ink-2)">no handshake &mdash; burned-in key</text>
-    <text x="165" y="426" text-anchor="middle" font-size="11" class="m" fill="var(--bad)">KEY 3 is in the source code</text>
+    <text x="165" y="407" text-anchor="middle" font-size="11.5" fill="var(--ink-2)">no handshake &mdash; provisioned key</text>
+    <text x="165" y="426" text-anchor="middle" font-size="11" class="m" fill="var(--sense)">KEY 3 runtime-generated, never committed</text>
     <path d="M300 390 L 460 390 L 460 328" fill="none" stroke="var(--ink-3)" stroke-width="1.6"
           stroke-dasharray="4 4" marker-end="url(#a1)" color="var(--ink-3)"/>
     <text x="380" y="382" text-anchor="middle" font-size="10.5" class="m" fill="var(--ink-3)">displayed only</text>
@@ -158,9 +222,10 @@ td.no{color:var(--bad);font-weight:600}
   agreed fresh per connection and are never the same key, so breaking one link
   yields nothing on the other. The operator holds a long-term signing key and the
   browser holds nothing &mdash; which is why every control on the dashboard is
-  refused. KEY 3 is committed to the repository, so anyone who can read the
-  source can forge that node's traffic; that is precisely why its readings are
-  displayed and never allowed to move the safety function.</figcaption>
+  refused. KEY 3 is provisioned at runtime and never committed &mdash; but it is a
+  static key on a device that cannot run the handshake, so if it were ever
+  extracted from a board it would be forgeable; that is precisely why its
+  readings are displayed and never allowed to move the safety function.</figcaption>
 </figure>
 
 <div class="legend">
@@ -327,17 +392,18 @@ td.no{color:var(--bad);font-weight:600}
       <tr><td class="m">Operator</td><td>ML-DSA-65, enrolled out of band</td>
         <td class="m">long-term</td><td class="ok">yes &mdash; within the clamp</td>
         <td>attacker still cannot exceed the range or the step limit</td></tr>
-      <tr><td class="m">KEY 3 &middot; ESP32</td><td>burned in, committed to the repo</td>
-        <td class="m">permanent</td><td class="no">no</td>
-        <td>already public &mdash; contained by keeping this lane off the safety path</td></tr>
+      <tr><td class="m">KEY 3 &middot; ESP32</td><td>random, provisioned at runtime (never committed)</td>
+        <td class="m">static per device</td><td class="no">no</td>
+        <td>static, so extractable from a board &mdash; contained by keeping this lane off the safety path</td></tr>
     </tbody>
   </table>
-  <div class="warnbox" style="margin-top:16px"><b>The honest weak point.</b> KEY 3 is
-  in the source code and cannot be defended. It is not a hole so much as a
-  boundary: the constrained node cannot run the handshake, so instead of
-  pretending it is trusted, the system denies it any route to the trip decision.
-  Removing that weakness for real means putting ML-KEM on the microcontroller,
-  which is future scope, not a weekend.</div>
+  <div class="warnbox" style="margin-top:16px"><b>The honest residual.</b> KEY 3 is
+  no longer in the source &mdash; it is generated at runtime and provisioned into the
+  board &mdash; but it is still a <em>static</em> key, not a per-session one, on a
+  device too small to run the handshake. A dumped flash image would expose it. So
+  instead of pretending that leg is trusted, the system denies it any route to the
+  trip decision. Closing the gap fully means putting ML-KEM on the
+  microcontroller, which is future scope, not a weekend.</div>
 </figure>
 
 </div>
