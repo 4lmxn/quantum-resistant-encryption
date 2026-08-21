@@ -27,6 +27,35 @@ Keeping ML-KEM off the microcontroller is the accepted trade-off. Being honest
 about what that costs — and putting this leg outside the safety path because of
 it — is the point of the split.
 
+## On-hardware post-quantum handshake — status and roadmap
+
+The **simulator** (`app/nodes/device_sim.py`) already runs the full ML-KEM-768 +
+ML-DSA-65 handshake over HTTP and becomes a full safety transmitter with a
+per-connection key — no pre-shared key. That is the verifiable proof the
+constrained leg *can* be a real post-quantum node.
+
+Porting that handshake onto the ESP32 firmware is a genuine sub-project. It was
+scoped empirically, not hand-waved, and these are the concrete blockers found:
+
+- **No ML-KEM-768 Arduino library exists.** The Library Manager has only
+  `PQCMicro` (ML-KEM-512 / ML-DSA-44). ML-KEM-768 would have to be vendored from
+  PQClean into the sketch.
+- **The ML-DSA-65 library does not link under Arduino.** `mldsa` (NeuraiProject)
+  provides ML-DSA-65 for ESP32, but it is a CMake *unity-build* design: compiled
+  flat by `arduino-cli` it leaves `PQCP_MLDSA_NATIVE_*` symbols undefined at link
+  time. It needs a precompiled `.a` or real build-system integration.
+- **Stack.** ML-DSA-65 signing needs ~45 KB of working memory; on ESP32 that is a
+  dedicated FreeRTOS task with a 64 KB stack, not the default 8 KB.
+- **Flash.** This sketch is already at 78% of program flash. ML-KEM-768 +
+  ML-DSA-65 code has to fit in what remains, or move to a board with more.
+- **Interop.** The C implementations must produce byte-identical results to
+  `kyber-py` and `dilithium-py` on the server. That has to be proven against
+  shared known-answer vectors on the bench before it is trusted.
+
+Until those are closed, the firmware seals telemetry with the provisioned
+`DEVICE_PSK` and the server keeps that leg off the safety lane. The protocol
+itself is done and tested; the microcontroller port is the remaining work.
+
 ## Build status
 
 Both sensor paths compile clean against **ESP32 Arduino core 3.3.11**, with

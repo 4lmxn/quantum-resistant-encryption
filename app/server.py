@@ -68,6 +68,12 @@ class CentralServer:
         # packet to re-send rather than a made-up one.
         self.last_command_packet = None
         self.dispatched_command_nonces = set()
+        # HTTP post-quantum handshake for the constrained node. Same ML-KEM-768
+        # and ML-DSA-65 as the Socket.IO nodes, carried over three POSTs because
+        # a microcontroller speaks HTTP, not a websocket. Keyed by device_id: a
+        # constrained node is one physical box with one enrolled identity.
+        self.http_pending = {}   # handshake_id -> (role, dk, ek, device_id)
+        self.http_sessions = {}  # device_id -> session_key
         self.findings = {}  # attack id -> last structured result
         # What a passive interceptor would hold for the legacy RSA channel:
         # the public key, the wrapped session key, and one captured packet.
@@ -402,27 +408,115 @@ def index():
     return render_template("index.html")
 
 
+@app.post("/pqc/hello")
+def http_pqc_hello():
+    """Step 1 of the constrained node's handshake, over HTTP.
+
+    The device says who it is and what role it plays; the server generates a
+    fresh ML-KEM-768 keypair for this connection and returns the encapsulation
+    key, signed with ML-DSA-65 so the device can be sure it is talking to the
+    real server and not a man in the middle.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    role = body.get("role")
+    if role not in ("sensor", "actuator"):
+        return {"status": "rejected", "reason": "unknown role"}, 400
+    device_id = str(body.get("device_id", ""))
+    encapsulation_key, decapsulation_key = generate_keypair()
+    handshake_id = os.urandom(16).hex()
+    server_engine.http_pending[handshake_id] = (role, decapsulation_key, encapsulation_key, device_id)
+
+    payload = {
+        "handshake_id": handshake_id,
+        "encapsulation_key": encapsulation_key.hex(),
+        "authenticated": AUTHENTICATED,
+    }
+    if AUTHENTICATED:
+        transcript = identity.handshake_transcript(role, encapsulation_key)
+        payload["server_signature"] = identity.sign(registry.server_secret, transcript).hex()
+        log("SUCCESS", f"[PQC/HTTP] {device_id or role} offer signed with ML-DSA-65.")
+    return payload
+
+
+@app.post("/pqc/encapsulate")
+def http_pqc_encapsulate():
+    """Step 2: the device returns its KEM ciphertext, signed with its own key.
+
+    The server verifies the device is enrolled and that the signature covers the
+    exact keys exchanged, then derives the same AES-256-GCM session key the
+    device just derived. From here the constrained node is a fully authenticated
+    post-quantum node -- it agreed a per-connection key and proved its identity,
+    exactly like the Socket.IO nodes. There is no pre-shared key on this path.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    handshake_id = str(body.get("handshake_id", ""))
+    entry = server_engine.http_pending.pop(handshake_id, None)
+    if entry is None:
+        return {"status": "rejected", "reason": "no handshake in progress"}, 400
+    role, decapsulation_key, encapsulation_key, hello_device = entry
+    device_id = str(body.get("device_id", "")) or hello_device
+    kem_ciphertext = bytes.fromhex(body.get("kem_ciphertext", ""))
+
+    if AUTHENTICATED:
+        if not registry.is_enrolled(device_id):
+            log("ERROR", f"[PQC/HTTP] Refused: {device_id or '<none>'} is not enrolled.")
+            return {"status": "rejected", "reason": "not enrolled"}, 403
+        expected = identity.handshake_transcript(role, encapsulation_key, kem_ciphertext)
+        signature = bytes.fromhex(body.get("device_signature", "") or "")
+        if not identity.verify(registry.public_key_of(device_id), expected, signature):
+            log("ERROR", f"[PQC/HTTP] Refused: bad ML-DSA signature from {device_id}.")
+            return {"status": "rejected", "reason": "bad signature"}, 403
+
+    label = LINK_SENSOR if role == "sensor" else LINK_ACTUATOR
+    session_key = decapsulate(decapsulation_key, kem_ciphertext, label)
+    server_engine.http_sessions[device_id] = session_key
+    server_fingerprint = key_fingerprint(session_key)
+    node_fingerprint = str(body.get("key_fingerprint", ""))
+    agreed = node_fingerprint == server_fingerprint
+
+    server_engine.sessions[f"http:{device_id}"] = {
+        "node": device_id, "role": role, "kem": "ML-KEM-768",
+        "public_key_bytes": ENCAPSULATION_KEY_BYTES, "ciphertext_bytes": KEM_CIPHERTEXT_BYTES,
+        "aes_key_bits": len(session_key) * 8,
+        "server_fingerprint": server_fingerprint, "node_fingerprint": node_fingerprint,
+        "agreed": agreed, "transport": "http", "authenticated": AUTHENTICATED,
+    }
+    broadcast_pqc_status()
+    if agreed:
+        log("SUCCESS", f"[PQC/HTTP] {device_id} session key established via ML-KEM-768 + HKDF-SHA256.")
+    else:
+        log("ERROR", f"[PQC/HTTP] {device_id} key disagreement.")
+    return {"status": "established", "server_fingerprint": server_fingerprint, "agreed": agreed}
+
+
 @app.post("/telemetry")
 def http_telemetry():
-    """Basic process control transmitter — the ESP32 leg.
+    """Constrained-node telemetry leg.
 
-    The board posts an AES-256-GCM packet sealed with its provisioned key,
-    because it cannot run the ML-KEM handshake itself. That weaker key is
-    exactly why this leg is not on the safety path: it reports, it is displayed,
-    and it cannot trip the plant. The safety function listens only to nodes that
-    proved who they were with ML-DSA-65.
+    A node that completed the /pqc handshake seals with its per-connection
+    ML-KEM-768 session key and is a full safety transmitter. A node that never
+    did -- an un-provisioned board -- may still fall back to the provisioned
+    device key, and that legacy path stays off the safety lane, because a static
+    key is not an authenticated identity. `device_id` selects the path.
     """
     packet = request.get_json(force=True, silent=True) or {}
+    device_id = str(packet.get("device_id", ""))
+    session_key = server_engine.http_sessions.get(device_id)
+    authenticated = session_key is not None
+    key = session_key if authenticated else DEVICE_PSK
+    scope = f"pqc-{device_id}" if authenticated else "device-psk"
+
     try:
-        data = server_engine.decrypt_sensor_data(DEVICE_PSK, packet)
+        data = server_engine.decrypt_sensor_data(key, packet)
     except Exception as exc:
         log("ERROR", f"[SERVER ERROR] ESP32 packet rejected: {exc}")
         return {"status": "rejected"}, 400
 
-    if not server_engine.accept_nonce("device-psk", packet.get("nonce", "")):
+    if not server_engine.accept_nonce(scope, packet.get("nonce", "")):
         log("ERROR", "[SERVER] REPLAY BLOCKED: this ESP32 packet was already accepted.")
         return {"status": "replay"}, 409
-    process_telemetry(data, "ESP32 node (BPCS)", packet, safety_relevant=False)
+    source = f"{device_id or 'ESP32'} (ML-KEM-768)" if authenticated else "ESP32 node (unprovisioned PSK)"
+    process_telemetry(data, source, packet, safety_relevant=authenticated)
     return {
         "status": "accepted",
         "setpoint": server_engine.trip_setpoint,

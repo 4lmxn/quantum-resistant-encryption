@@ -238,26 +238,31 @@ never replace them with the key itself.
 `app/nodes/device_sim.py` is the ESP32 stand-in and shares the wire format with
 `firmware/sketch/sketch.ino`. Changing one means changing the other.
 
-## The ESP32 leg is BPCS, not safety
+## The constrained node's HTTP handshake
 
-`firmware/` holds firmware, wiring and instructions. The board does a real DHT22
-read and real AES-256-GCM via mbedtls, then POSTs to `/telemetry` — one HTTP
-route rather than teaching a microcontroller Socket.IO.
+The constrained node speaks HTTP, not Socket.IO, so it runs the *same*
+ML-KEM-768 + ML-DSA-65 handshake carried over three POSTs: `/pqc/hello` returns
+a fresh, ML-DSA-signed encapsulation key; the node verifies that, encapsulates,
+signs its ciphertext with its own enrolled key, and posts it to
+`/pqc/encapsulate`; the server derives the same session key. `app/nodes/device_sim.py`
+does exactly this and is the verifiable proof — it agrees a per-connection key
+and proves its identity like every other node, then seals telemetry with that
+session key. There is **no pre-shared key on this path**.
 
-It does **not** run the handshake. It uses `DEVICE_PSK`, a provisioned key
-duplicated in `app/config.py` and `sketch.ino`; the two must match byte for byte.
-That key is committed to this repository, so anyone reading the source can forge
-ESP32 telemetry. It is the one remaining pre-shared key in the system, the
-accepted residual risk of keeping ML-KEM off the microcontroller, and overridable
-with the `DEVICE_PSK` environment variable.
+`http_telemetry()` chooses the lane by `device_id`: a node with a live `/pqc`
+session is `safety_relevant=True` and **can** trip the plant; an un-provisioned
+board with only the static `DEVICE_PSK` falls back to `safety_relevant=False`,
+because a static key is not an authenticated identity. Keep that split: never let
+the PSK fallback reach `decide_trip()`.
 
-It is also exactly why the board sits on the basic process control lane rather
-than the safety lane. `http_telemetry()` calls
-`process_telemetry(..., safety_relevant=False)`, so ESP32 readings are decrypted,
-displayed and logged (tagged `[SERVER/BPCS]`) but never reach `decide_trip()`.
-A leg that cannot prove who it is must not be able to trip the plant. Do not
-pass `safety_relevant=True` from that route, and do not give the ESP32 a path to
-the trip decision without first giving it a real ML-DSA identity.
+**On real hardware the handshake is a genuine sub-project, not done here.** The
+firmware still POSTs AES-256-GCM telemetry; porting the handshake to the ESP32 is
+blocked on measured issues documented in `firmware/README.md`: no ML-KEM-768
+Arduino library exists, the ML-DSA-65 library does not link under Arduino's
+flat-compile model, ML-DSA-65 signing needs a ~45 KB-stack FreeRTOS task on a
+chip already at 78% flash, and cross-implementation interop with `kyber-py` /
+`dilithium-py` must be validated against known-answer vectors. Do not claim the
+firmware runs the handshake until those are closed on the bench.
 
 ## Conventions
 

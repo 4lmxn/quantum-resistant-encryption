@@ -82,6 +82,7 @@ test:
 	$(PY) -m tests.test_duplicate_identity
 	$(PY) -m tests.test_command_replay
 	$(PY) -m tests.test_actuator_resync
+	$(PY) -m tests.test_http_handshake
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:
