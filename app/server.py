@@ -15,6 +15,7 @@ from app.config import (
     HEARTBEAT_PERIOD_S,
     HEARTBEAT_TIMEOUT_S,
     OPERATOR_MAX_SKEW_S,
+    PROJECT_ROOT,
     SERVER_HOST,
     SERVER_PORT,
     SETPOINT_MAX_C,
@@ -94,6 +95,11 @@ class CentralServer:
         # which is what stops a replay.
         self.seen_nonces = {}  # scope -> set of nonce hex
         self.replays_blocked = 0
+        # The most recent genuinely accepted sensor telemetry packet, kept so the
+        # telemetry-replay and stale-session attacks have a real captured packet
+        # to work with rather than a made-up one -- same idea as
+        # last_command_packet, for the input side instead of the output side.
+        self.last_sensor_capture = None  # {"sid": ..., "packet": {...}} or None
 
     def begin_handshake(self, sid, role):
         encapsulation_key, decapsulation_key = generate_keypair()
@@ -200,6 +206,9 @@ def log(log_type, msg):
     socketio.emit("security_log", {"type": log_type, "msg": msg})
 
 
+ATTACK_RESULTS_DIR = PROJECT_ROOT / "results" / "attacks"
+
+
 def report_attack(identifier, status, confidence, evidence, outcome):
     """Publishes a full finding: name, severity, target, evidence, mitigation."""
     record = dict(attacks.describe(identifier))
@@ -213,6 +222,18 @@ def report_attack(identifier, status, confidence, evidence, outcome):
     )
     server_engine.findings[identifier] = record
     socketio.emit("attack_result", record)
+    _persist_finding(identifier, record)
+
+
+def _persist_finding(identifier, record):
+    """Machine-readable evidence for the research track, one file per attack --
+    overwritten with the latest run's result. Best-effort: a disk problem here
+    must never break the live demo the finding is also being shown in."""
+    try:
+        ATTACK_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        (ATTACK_RESULTS_DIR / f"{identifier}.json").write_text(json.dumps(record, indent=2))
+    except OSError as exc:
+        log("ERROR", f"[SERVER] Could not write results/attacks/{identifier}.json: {exc}")
 
 
 def broadcast_findings():
@@ -680,6 +701,7 @@ def handle_sensor_telemetry(packet):
         return
     try:
         data = server_engine.decrypt_sensor_data(session_key, packet)
+        server_engine.last_sensor_capture = {"sid": request.sid, "packet": dict(packet)}
         process_telemetry(data, "sensor node", packet)
     except Exception as exc:
         log("ERROR", f"[SERVER ERROR] Decryption failed: {exc}")
@@ -775,6 +797,149 @@ def _attack_capture_and_replay():
     return True, not already_seen
 
 
+def _attack_replay_telemetry():
+    """Re-checks a genuinely captured (session, nonce) pair against the same
+    freshness gate handle_sensor_telemetry uses on the way in. Returns
+    (had_packet, accepted_on_replay)."""
+    capture = server_engine.last_sensor_capture
+    if capture is None:
+        return False, False
+    sid, packet = capture["sid"], capture["packet"]
+    accepted_again = server_engine.accept_nonce(sid, packet.get("nonce", ""))
+    return True, accepted_again
+
+
+def _attack_check_stale_session():
+    """Whether the session that produced the last captured reading still holds
+    a key. Returns (had_packet, still_live)."""
+    capture = server_engine.last_sensor_capture
+    if capture is None:
+        return False, False
+    return True, capture["sid"] in server_engine.sensor_keys
+
+
+def _attack_probe_nonce():
+    """Burns a throwaway nonce, then tries to reuse it. Neither attempt is a
+    real telemetry packet -- the point is that the freshness gate does not
+    care. Returns (first_accepted, second_accepted)."""
+    probe_sid = f"attack-probe-{secrets.token_hex(4)}"
+    nonce_hex = os.urandom(12).hex()
+    first = server_engine.accept_nonce(probe_sid, nonce_hex)
+    second = server_engine.accept_nonce(probe_sid, nonce_hex)
+    return first, second
+
+
+def _attack_send_stale_operator():
+    """A genuinely signed RESET, timestamped well outside OPERATOR_MAX_SKEW_S."""
+    if not AUTHENTICATED:
+        return "refused (no operator enrolled)"
+    from app.nodes.operator import OPERATOR_ID, OPERATOR_SECRET
+    if OPERATOR_SECRET is None:
+        return "refused (no operator key on this server)"
+    nonce = os.urandom(16).hex()
+    stale_ts = int(time.time()) - int(OPERATOR_MAX_SKEW_S) - 60
+    transcript = identity.operator_transcript(OPERATOR_ID, "RESET", None, nonce, stale_ts)
+    handle_operator_command({
+        "operator_id": OPERATOR_ID, "action": "RESET", "value": None,
+        "nonce": nonce, "timestamp": stale_ts,
+        "signature": identity.sign(OPERATOR_SECRET, transcript).hex(),
+    })
+    return "refused by freshness check" if nonce not in server_engine.operator_nonces else "APPLIED"
+
+
+def _attack_attempt_downgrade():
+    """Seals a reading for an already-authenticated constrained-node device_id
+    with the low-trust static provisioning key instead of its real session key,
+    and posts it through the real HTTP endpoint. Returns (had_target, accepted)."""
+    if not server_engine.http_sessions:
+        return False, False
+    device_id = next(iter(server_engine.http_sessions))
+    import requests
+    from app.config import SERVER_URL
+    nonce = os.urandom(12)
+    payload = b'{"temperature": 99.0, "humidity": 40.0}'
+    ciphertext = AESGCM(DEVICE_PSK).encrypt(nonce, payload, None)
+    packet = {"device_id": device_id, "nonce": nonce.hex(), "ciphertext": ciphertext.hex()}
+    try:
+        resp = requests.post(f"{SERVER_URL}/telemetry", json=packet, timeout=5)
+    except requests.RequestException:
+        return True, False
+    return True, resp.status_code == 200
+
+
+def _attack_send_malformed():
+    """Exercises the real parsing/decrypt path directly with missing fields and
+    non-hex garbage, rather than through the Socket.IO handlers: those gate on
+    request.sid, which -- dispatched from this attack -- is the dashboard
+    browser's session, not a sensor's, and would short-circuit before ever
+    reaching the code actually being fuzzed here."""
+    results = []
+    throwaway_key = os.urandom(32)
+
+    for label, packet in (
+        ("empty sensor packet", {}),
+        ("non-hex sensor packet", {"nonce": "not-hex!!", "ciphertext": "also not hex"}),
+        ("truncated sensor packet", {"nonce": "aa", "ciphertext": "bb"}),
+    ):
+        try:
+            server_engine.decrypt_sensor_data(throwaway_key, packet)
+            results.append((False, f"{label}: DECRYPTED (should be impossible)"))
+        except Exception as exc:
+            results.append((True, f"{label}: rejected ({type(exc).__name__})"))
+
+    before = server_engine.trip_state
+    try:
+        deliver_raw_to_actuators({"nonce": "zz", "ciphertext": "gg"})
+        results.append((True, "malformed actuator packet: delivered without a server crash"))
+    except Exception as exc:
+        results.append((False, f"malformed actuator packet CRASHED the server: {type(exc).__name__}"))
+    if server_engine.trip_state != before:
+        results.append((False, "trip state changed as a result of malformed input"))
+
+    return results
+
+
+def _attack_send_oversized():
+    """A multi-megabyte forged ciphertext field. Returns (size_bytes, elapsed_ms,
+    rejected)."""
+    throwaway_key = os.urandom(32)
+    huge_ciphertext = os.urandom(2_000_000).hex()
+    packet = {"nonce": os.urandom(12).hex(), "ciphertext": huge_ciphertext}
+    started = time.perf_counter()
+    try:
+        server_engine.decrypt_sensor_data(throwaway_key, packet)
+        rejected = False
+    except Exception:
+        rejected = True
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    return len(huge_ciphertext) // 2, elapsed_ms, rejected
+
+
+def _attack_send_legacy_events():
+    """Connects a genuine second Socket.IO client and emits the three control
+    events the dashboard used to expose before they were removed. A real
+    client, not a direct function call, because the point is that the server's
+    dispatcher has nothing registered for these names any more -- not that
+    some in-process shortcut happens to reject them."""
+    import socketio as _client_lib
+    from app.config import SERVER_URL
+    before = (server_engine.trip_state, server_engine.trip_setpoint, server_engine.bypass)
+    client = _client_lib.Client()
+    try:
+        client.connect(SERVER_URL)
+        client.emit("set_threshold", {"value": 999.0})
+        client.emit("toggle_actuator_override", {})
+        client.emit("resume_automatic", {})
+        client.sleep(0.5)
+    finally:
+        client.disconnect()
+    return before == (server_engine.trip_state, server_engine.trip_setpoint, server_engine.bypass)
+
+
+def _attack_check_actuator_presence():
+    return bool(server_engine.actuator_keys)
+
+
 @socketio.on("trigger_attack")
 def handle_trigger_attack(data):
     """Dashboard attack buttons. Runs in the background so the stage sleeps do
@@ -787,6 +952,15 @@ def handle_trigger_attack(data):
         "send_operator": _attack_send_operator,
         "impersonate": _attack_impersonate,
         "capture_and_replay": _attack_capture_and_replay,
+        "replay_telemetry": _attack_replay_telemetry,
+        "check_stale_session": _attack_check_stale_session,
+        "probe_nonce": _attack_probe_nonce,
+        "send_stale_operator": _attack_send_stale_operator,
+        "attempt_downgrade": _attack_attempt_downgrade,
+        "send_malformed": _attack_send_malformed,
+        "send_oversized": _attack_send_oversized,
+        "send_legacy_events": _attack_send_legacy_events,
+        "check_actuator_presence": _attack_check_actuator_presence,
     }
 
     def _run():

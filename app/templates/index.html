@@ -159,6 +159,8 @@ body{background:var(--bg);color:var(--ink);
 .sev-CRITICAL{background:rgba(248,113,113,.16);color:var(--bad)}
 .sev-HIGH{background:rgba(251,191,36,.16);color:var(--warn)}
 .sev-MEDIUM{background:rgba(96,165,250,.16);color:var(--info)}
+.sev-LOW{background:rgba(170,182,210,.14);color:var(--muted)}
+.sev-INFO{background:rgba(170,182,210,.14);color:var(--muted)}
 .atk .st{font-size:.68em;color:var(--faint);display:block;margin-top:.1em}
 .atk .st.def{color:var(--ok)} .atk .st.na{color:var(--faint)} .atk .st.run{color:var(--warn)}
 
@@ -501,6 +503,16 @@ const ATTACKS = [
   {id:'rogue',   n:'4', name:'Rogue Node',                  sev:'HIGH',     group:'Documented incidents'},
   {id:'replay',  n:'5', name:'Replay a Captured Command',   sev:'HIGH',     group:'Documented incidents'},
   {id:'mitm',    n:'6', name:'Forged Command Injection',    sev:'CRITICAL', group:'Documented incidents'},
+  {id:'telemetry_replay', n:'q', name:'Replay a Captured Reading',   sev:'MEDIUM', group:'Freshness & session gaps'},
+  {id:'stale_session',    n:'w', name:'Replay Into a Closed Session',sev:'MEDIUM', group:'Freshness & session gaps'},
+  {id:'nonce_probe',      n:'e', name:'Nonce Reuse Probe',           sev:'LOW',    group:'Freshness & session gaps'},
+  {id:'timestamp_manip',  n:'r', name:'Stale Operator Command',      sev:'MEDIUM', group:'Freshness & session gaps'},
+  {id:'downgrade',        n:'t', name:'Downgrade to the Provisioning Key', sev:'MEDIUM', group:'Freshness & session gaps'},
+  {id:'malformed_packet', n:'y', name:'Malformed Packet',            sev:'LOW',    group:'Input validation'},
+  {id:'oversized',        n:'u', name:'Oversized Message',           sev:'LOW',    group:'Input validation'},
+  {id:'invalid_transition', n:'i', name:'Unsigned Control Path',     sev:'LOW',    group:'Fail-safe boundary'},
+  {id:'actuator_absent',  n:'o', name:'No Final Element Connected',  sev:'HIGH',   group:'Fail-safe boundary'},
+  {id:'server_unavailable', n:'p', name:'Logic Solver Unavailable',  sev:'INFO',   group:'Fail-safe boundary'},
   {id:'shor',    n:'7', name:"Shor's Algorithm",            sev:'CRITICAL', group:'Quantum — forward-looking'},
   {id:'kyber',   n:'8', name:'Lattice Reduction (BKZ)',     sev:'CRITICAL', group:'Quantum — forward-looking'},
   {id:'harvest', n:'9', name:'Harvest Now, Decrypt Later',  sev:'HIGH',     group:'Quantum — forward-looking'},

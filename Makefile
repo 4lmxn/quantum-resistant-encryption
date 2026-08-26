@@ -3,7 +3,8 @@ PY := .venv/bin/python
 
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
-        firmware firmware-pqc firmware-pqc-node firmware-keys pqc-interop firmware-setup sensor-legacy enroll bench operator hsm-import
+        firmware firmware-pqc firmware-pqc-node firmware-keys pqc-interop firmware-setup sensor-legacy enroll bench operator hsm-import \
+        bench-crypto bench-safety bench-safety-cpu
 
 help:
 	@echo "Setup:"
@@ -11,6 +12,9 @@ help:
 	@echo "  make certs          generate TLS certificates (once, for MQTT)"
 	@echo "  make enroll         create ML-DSA device identities (once)"
 	@echo "  make bench          measure post-quantum primitive costs"
+	@echo "  make bench-crypto   full-stats crypto/protocol benchmark (N=1000/100, raw + JSON)"
+	@echo "  make bench-safety   safety-response latency, idle CPU (needs make server running)"
+	@echo "  make bench-safety-cpu   same, under CPU load"
 	@echo ""
 	@echo "Run the demo (one per terminal):"
 	@echo "  make server         central server + dashboard on :5001"
@@ -35,6 +39,15 @@ enroll:             ## create server + device ML-DSA identities (once)
 
 bench:              ## measure what the post-quantum primitives cost
 	$(PY) bench.py
+
+bench-crypto:       ## full-stats crypto/protocol benchmark -- results/{raw,processed}/
+	$(PY) -m scripts.bench_crypto
+
+bench-safety:       ## safety-response latency (sensor event -> valve CLOSED), needs make server
+	$(PY) -m scripts.bench_safety_response --load idle
+
+bench-safety-cpu:   ## same, with the host under CPU load
+	$(PY) -m scripts.bench_safety_response --load cpu
 
 hsm-import:         ## move the server signing key into a PKCS#11 HSM (SIS_HSM_* set)
 	$(PY) -m scripts.hsm_import $(ARGS)
@@ -79,6 +92,7 @@ actuator-mqtt:
 test:
 	$(PY) -m tests.test_pqc
 	$(PY) -m tests.test_trip_logic
+	$(PY) -m tests.test_safety_invariants
 	$(PY) -m tests.test_identity
 	$(PY) -m tests.test_operator_auth
 	$(PY) -m tests.test_heartbeat
