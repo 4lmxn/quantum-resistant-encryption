@@ -211,6 +211,15 @@ silent rewrite of the paragraph above it, per this document's own closing
 note about being a snapshot — the original finding is kept so the "what was
 true when" record stays intact.
 
+**Post-audit update (2026-08-26): `oversized` closed.** `MAX_CIPHERTEXT_HEX_CHARS`
+(`app/config.py`) now rejects an oversized ciphertext field in
+`decrypt_sensor_data` — the single choke point for every sensor-originated
+packet (Socket.IO, the ESP32 HTTP leg, and the MQTT bridge) — before
+`AESGCM.decrypt` is ever called, not after. `actuator_absent` remains open;
+the dead-man watchdog is deliberately actuator-resident (`docs/SIS_CONTRACT.md`),
+so no server-side fix closes it without moving that decision back to the
+server, which the contract forbids.
+
 ## F. Current experimental capabilities
 
 - `bench.py`: median/p95 timing for ML-KEM keygen/encapsulate/decapsulate,

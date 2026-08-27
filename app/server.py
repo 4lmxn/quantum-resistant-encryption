@@ -14,6 +14,7 @@ from app.config import (
     DEVICE_PSK,
     HEARTBEAT_PERIOD_S,
     HEARTBEAT_TIMEOUT_S,
+    MAX_CIPHERTEXT_HEX_CHARS,
     OPERATOR_MAX_SKEW_S,
     PROJECT_ROOT,
     SERVER_HOST,
@@ -158,10 +159,21 @@ class CentralServer:
         self.offered_keys.pop(sid, None)
 
     def decrypt_sensor_data(self, session_key, packet):
-        """Decrypts sensor payload with the negotiated sensor session key."""
+        """Decrypts sensor payload with the negotiated sensor session key.
+
+        Rejects an oversized ciphertext field before ever calling AESGCM.decrypt
+        -- closing the `oversized` attack stage's finding that size alone used
+        to reach a full decrypt attempt before being refused.
+        """
+        ciphertext_hex = packet.get("ciphertext", "")
+        if len(ciphertext_hex) > MAX_CIPHERTEXT_HEX_CHARS:
+            raise ValueError(
+                f"ciphertext field is {len(ciphertext_hex)} hex chars, "
+                f"over the {MAX_CIPHERTEXT_HEX_CHARS}-char limit"
+            )
         aesgcm = AESGCM(session_key)
         nonce = bytes.fromhex(packet["nonce"])
-        ciphertext = bytes.fromhex(packet["ciphertext"])
+        ciphertext = bytes.fromhex(ciphertext_hex)
         return json.loads(aesgcm.decrypt(nonce, ciphertext, None).decode())
 
     def encrypt_actuator_command(self, session_key, command_str, seq=None):
@@ -901,18 +913,22 @@ def _attack_send_malformed():
 
 def _attack_send_oversized():
     """A multi-megabyte forged ciphertext field. Returns (size_bytes, elapsed_ms,
-    rejected)."""
+    rejected, rejected_by_size_cap)."""
     throwaway_key = os.urandom(32)
     huge_ciphertext = os.urandom(2_000_000).hex()
     packet = {"nonce": os.urandom(12).hex(), "ciphertext": huge_ciphertext}
     started = time.perf_counter()
+    rejected_by_size_cap = False
     try:
         server_engine.decrypt_sensor_data(throwaway_key, packet)
         rejected = False
+    except ValueError as exc:
+        rejected = True
+        rejected_by_size_cap = "hex chars" in str(exc)
     except Exception:
         rejected = True
     elapsed_ms = (time.perf_counter() - started) * 1000
-    return len(huge_ciphertext) // 2, elapsed_ms, rejected
+    return len(huge_ciphertext) // 2, elapsed_ms, rejected, rejected_by_size_cap
 
 
 def _attack_send_legacy_events():

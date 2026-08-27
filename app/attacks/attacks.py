@@ -270,12 +270,10 @@ ATTACK_CATALOG = {
         "impact": "An unbounded parser could be used to exhaust memory or CPU with "
                   "a stream of oversized junk, a resource-exhaustion angle distinct "
                   "from forgery.",
-        "mitigation": "The oversized packet fails the same way an ordinary forged "
-                      "one does -- decryption fails on the bad tag and the packet is "
-                      "dropped. No explicit size cap exists at the application layer; "
-                      "this is reported honestly as a real, if narrow, gap rather "
-                      "than papered over.",
-        "gap": True,
+        "mitigation": "A packet whose ciphertext field exceeds MAX_CIPHERTEXT_HEX_CHARS "
+                      "(app/config.py) is rejected on field length before AESGCM.decrypt "
+                      "ever runs -- a genuine reading is well under that bound, so this "
+                      "costs nothing on the legitimate path.",
     },
     "invalid_transition": {
         "name": "Unsigned Control Path",
@@ -794,19 +792,23 @@ def stage_oversized(log, sleep, report, send_oversized):
     """Real: a multi-megabyte forged ciphertext field."""
     log("ATTACK", "Oversized Message: submitting a multi-megabyte forged telemetry packet")
     sleep(1)
-    size_bytes, elapsed_ms, rejected = send_oversized()
+    size_bytes, elapsed_ms, rejected, rejected_by_size_cap = send_oversized()
     sleep(1)
+    if rejected_by_size_cap:
+        outcome = ("MAX_CIPHERTEXT_HEX_CHARS rejects the packet on field length before "
+                   "AESGCM.decrypt ever runs, closing the earlier gap where size alone "
+                   "reached a full decrypt attempt before being refused on the GCM tag.")
+    else:
+        outcome = ("Rejected on the GCM tag rather than the size cap -- unexpected for "
+                   "a packet this large; check MAX_CIPHERTEXT_HEX_CHARS.")
     report(
         "oversized",
         status="DEFENDED" if rejected else "SUCCEEDED",
         confidence="Observed",
         evidence=f"A {size_bytes:,}-byte forged packet was "
-                 f"{'rejected' if rejected else 'ACCEPTED'} in {elapsed_ms:.1f}ms.",
-        outcome="Size alone did not change the outcome -- it failed the same GCM "
-                "tag check an ordinary forged packet does. No explicit request-size "
-                "limit is enforced at the application layer, which is a real, "
-                "narrow gap: a flood of oversized junk is still a CPU-cost attack "
-                "even though none of it can ever be accepted.",
+                 f"{'rejected' if rejected else 'ACCEPTED'} in {elapsed_ms:.1f}ms"
+                 f"{' by the application-layer size cap' if rejected_by_size_cap else ''}.",
+        outcome=outcome,
     )
 
 

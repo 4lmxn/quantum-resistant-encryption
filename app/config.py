@@ -74,6 +74,12 @@ OPERATOR_MAX_SKEW_S = 30.0
 HEARTBEAT_PERIOD_S = 2.0
 HEARTBEAT_TIMEOUT_S = 6.0
 
+# A genuine sensor/actuator AES-256-GCM ciphertext field is well under 200
+# hex characters. This is a generous upper bound, not a tight one -- it exists
+# so an oversized forged packet is rejected before a decrypt attempt, not
+# just by the GCM tag afterward (the `oversized` attack stage's finding).
+MAX_CIPHERTEXT_HEX_CHARS = 4096
+
 # Port 5000 is occupied by AirPlay Receiver on macOS, hence 5001.
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5001

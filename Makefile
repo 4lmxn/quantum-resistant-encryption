@@ -101,6 +101,7 @@ test:
 	$(PY) -m tests.test_actuator_resync
 	$(PY) -m tests.test_http_handshake
 	$(PY) -m tests.test_pqc_interop
+	$(PY) -m tests.test_oversized_packet
 	$(PY) -m tests.test_firmware_e2e
 	$(PY) -m tests.test_hsm
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"

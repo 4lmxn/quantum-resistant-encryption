@@ -245,12 +245,16 @@ document:
   causes a trip by design; cutting the sensor link produces silence with no
   equivalent forced response (`docs/THREAT_MODEL.md`, "New gaps this
   analysis surfaces").
-- **Two gaps found by this phase's own attack stages remain open, not
+- **One gap found by this phase's own attack stages remains open, not
   fixed:** no actuator process running means no watchdog enforcing the
-  fail-safe at all (`actuator_absent`, HIGH), and no application-layer
-  request-size cap exists, so an oversized forged packet is rejected
-  correctly but only after a full decrypt attempt (`oversized`, LOW —
-  narrow CPU-cost DoS angle).
+  fail-safe at all (`actuator_absent`, HIGH) — deliberately so, since the
+  watchdog is actuator-resident by design (`docs/SIS_CONTRACT.md`) and a
+  server-side fix would mean moving that decision back to the server. A
+  second gap, an oversized forged packet reaching a full decrypt attempt
+  before being rejected (`oversized`, LOW), is now closed: `app/config.py`'s
+  `MAX_CIPHERTEXT_HEX_CHARS` rejects it on field length first, in
+  `decrypt_sensor_data`, the single choke point every sensor-originated
+  packet passes through regardless of transport.
 - **Nonce/replay state does not survive a server restart** — `seen_nonces`
   and `operator_nonces` are in-process sets with no persistence
   (`docs/RESEARCH_AUDIT.md` J-2).
