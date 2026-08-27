@@ -7,14 +7,22 @@ function has one edge: once the process variable reaches the setpoint the trip
 latches, and only an authenticated operator RESET clears it.
 """
 
+import time
+
 from app import server
 
 
 class FakeEngine:
-    def __init__(self, setpoint=80.0, bypass=False, with_actuator=True):
+    def __init__(self, setpoint=80.0, bypass=False, with_actuator=True,
+                 bypass_asserted_at=None, bypass_last_reminder_at=None):
         self.trip_setpoint = setpoint
         self.trip_state = "HEALTHY"
         self.bypass = bypass
+        self.bypass_asserted_at = bypass_asserted_at if bypass_asserted_at is not None else (
+            time.time() if bypass else None)
+        self.bypass_last_reminder_at = (
+            bypass_last_reminder_at if bypass_last_reminder_at is not None else (
+                time.time() if bypass else None))
         self.actuator_keys = {"fake-actuator": b"\x00" * 32} if with_actuator else {}
 
 
@@ -84,6 +92,31 @@ def test_bypass_suspends_the_trip_entirely():
     states, commands = run([85.0, 120.0], bypass=True)
     assert states == ["HEALTHY", "HEALTHY"], states
     assert commands == [], f"bypass asserted but the trip still fired: {commands}"
+
+
+def test_bypass_auto_expires_and_the_trip_fires_again():
+    """J-3: bypass must not stand forever. Once BYPASS_MAX_DURATION_S has
+    elapsed, the next reading re-arms trip logic and evaluates normally --
+    an over-setpoint reading right after expiry still latches."""
+    engine = FakeEngine(bypass=True,
+                         bypass_asserted_at=time.time() - server.BYPASS_MAX_DURATION_S - 1)
+    commands = []
+    with patched(engine, commands):
+        server.decide_trip(120.0)
+    assert engine.bypass is False, "bypass did not auto-clear past its limit"
+    assert engine.trip_state == "TRIPPED", "expired bypass did not re-arm trip logic"
+    assert commands == ["TRIP"], commands
+
+
+def test_bypass_short_of_expiry_still_suspends_the_trip():
+    engine = FakeEngine(bypass=True,
+                         bypass_asserted_at=time.time() - (server.BYPASS_MAX_DURATION_S - 5))
+    commands = []
+    with patched(engine, commands):
+        server.decide_trip(120.0)
+    assert engine.bypass is True, "bypass cleared before its limit"
+    assert engine.trip_state == "HEALTHY", "trip fired while bypass still valid"
+    assert commands == [], commands
 
 
 def test_latches_even_with_no_actuator_listening():

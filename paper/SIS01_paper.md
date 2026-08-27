@@ -258,9 +258,11 @@ document:
 - **Nonce/replay state does not survive a server restart** — `seen_nonces`
   and `operator_nonces` are in-process sets with no persistence
   (`docs/RESEARCH_AUDIT.md` J-2).
-- **Bypass has no timeout, dual-authorization, or automatic
-  reassertion** — asserted indefinitely once set (`docs/RESEARCH_AUDIT.md`
-  finding C, J-3; `docs/STANDARDS_MAPPING.md` bypass row).
+- **Bypass has no dual-authorization.** It now time-boxes itself —
+  `decide_trip()` auto-clears it past `BYPASS_MAX_DURATION_S` and logs a
+  periodic reminder while it stands — but a second authorizer is still not
+  required to assert it (`docs/RESEARCH_AUDIT.md` finding C, J-3;
+  `docs/STANDARDS_MAPPING.md` bypass row).
 - **Single-family cryptographic risk.** ML-KEM and ML-DSA both rest on
   structured lattices; a break in that mathematical family removes key
   exchange and authentication together. A hybrid construction with a

@@ -205,5 +205,5 @@ future reader doesn't cite only one.
 
 *Companion documents: `docs/THREAT_MODEL.md` for the adversary each
 invariant defends against; `docs/RESEARCH_AUDIT.md` finding C and K for
-the broader safety-standard gaps (no bypass timeout, no alarm band, no
-fault state) this document formalizes.*
+the broader safety-standard gaps (bypass now time-boxed — see finding C,
+J-3; still no alarm band, no fault state) this document formalizes.*

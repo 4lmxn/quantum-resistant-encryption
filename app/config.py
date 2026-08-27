@@ -80,6 +80,13 @@ HEARTBEAT_TIMEOUT_S = 6.0
 # just by the GCM tag afterward (the `oversized` attack stage's finding).
 MAX_CIPHERTEXT_HEX_CHARS = 4096
 
+# A real SIS time-boxes a maintenance override rather than trusting an operator
+# to remember it is still asserted. Auto-expiry is a second, independent
+# backstop alongside the reminder log below -- neither depends on the operator
+# coming back.
+BYPASS_MAX_DURATION_S = 300.0
+BYPASS_REMINDER_INTERVAL_S = 30.0
+
 # Port 5000 is occupied by AirPlay Receiver on macOS, hence 5001.
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5001

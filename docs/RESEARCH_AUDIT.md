@@ -101,10 +101,9 @@ physical board is available this pass — every hardware number stays
 - Bypass (`server_engine.bypass`, asserted only via a signed
   `BYPASS_ON`/`BYPASS_OFF` operator command, `app/server.py:884-891`) causes
   `decide_trip()` to return unconditionally
-  (`app/server.py:309-310`). There is no bypass timeout, no audit reminder
-  while bypass is asserted, and no limit on how long a bypass may stand —
-  a real SIS would typically time-box a maintenance override. **Gap, see
-  J-3.**
+  (`app/server.py:309-310`). **Closed, see J-3**: bypass now auto-expires
+  after `BYPASS_MAX_DURATION_S` and logs a periodic reminder while asserted.
+  Still no second authorizer.
 - The actuator's watchdog (`app/nodes/actuator.py:92-115, 213-`) is
   authoritative and independent: it trips on 6 seconds of heartbeat silence
   regardless of what the server believes, which is the documented answer to
@@ -318,8 +317,9 @@ this codebase specifically could tempt someone to overclaim:
   safety messages generically, per the parent prompt's explicit instruction.
 - **Not** "production-ready" — `server_engine.seen_nonces` is unbounded
   in-memory state with no restart persistence (finding B, last bullet), and
-  the bypass mechanism has no timeout (finding C); both are reasonable for a
-  research testbed and disqualifying for a production safety system.
+  the bypass mechanism still has no dual-authorization (finding C, now
+  time-boxed but not dual-authorized); both are reasonable for a research
+  testbed and disqualifying for a production safety system.
 
 ## J. Reproducibility problems
 
@@ -338,11 +338,22 @@ this codebase specifically could tempt someone to overclaim:
   in-process sets. No test exercises "server restarts, previously-seen nonce
   is replayed" — this is a real, currently-untested reproducibility and
   security gap, not present in any of the 76 existing tests by name.
-- **J-3. No bypass timeout or expiry.** `server_engine.bypass` stays asserted
+- **J-3. No bypass timeout or expiry.** ~~`server_engine.bypass` stays asserted
   indefinitely once set; nothing times it out, reminds an operator it is
-  still asserted, or logs periodically while it stands. No test covers this
-  because there is no behavior to test — it is an absent feature, not a
-  broken one.
+  still asserted, or logs periodically while it stands.~~ **Closed
+  (2026-08-27).** `decide_trip()` checks bypass age against
+  `BYPASS_MAX_DURATION_S` (`app/config.py`) on every reading — a genuinely
+  periodic check, since telemetry arrives every 4s (`app/nodes/sensor.py`)
+  — and auto-clears past that limit, logging `[SIS] Maintenance bypass
+  auto-expired` and re-arming trip logic for that same reading rather than
+  waiting for the next one. Short of expiry, a reminder logs at most once
+  per `BYPASS_REMINDER_INTERVAL_S`. Covered by
+  `tests/test_trip_logic.py::test_bypass_auto_expires_and_the_trip_fires_again`
+  and `::test_bypass_short_of_expiry_still_suspends_the_trip`. Still open:
+  no dual-authorization, and auto-expiry re-arms trip logic rather than
+  automatically re-asserting the bypass (a real maintenance task that
+  overruns the window has to be re-signed, which is intentional — silent
+  re-assertion would defeat the point of a time-box).
 - **J-4. No automated test for restart-during-trip re-assertion.** The
   comment at `app/server.py:368` documents the intended behavior (a
   reconnecting actuator is told the authoritative state); no test drives
@@ -376,9 +387,9 @@ Framed against IEC 61511 / ISA-84 concepts, without claiming compliance
   in firmware (`firmware/README.md`, "the library returns `NAN` and the
   sketch refuses to publish") which is real but firmware-only, not mirrored
   in the Python sensor node.
-- **Bypass has no time-box, dual-authorization, or automatic-reassertion
-  requirement**, all of which IEC 61511 treats as important for maintenance
-  overrides (finding C, J-3).
+- **Bypass has no dual-authorization or automatic-reassertion
+  requirement** (it is now time-boxed — finding C, J-3), both of which
+  IEC 61511 treats as important for maintenance overrides.
 - **Proof of the "authenticated ≠ safety-valid" property exists only as a
   demonstration (`insider` stage), not as a documented, versioned safety
   requirement with a corresponding formal invariant** — this is exactly

@@ -12,6 +12,8 @@ from app.attacks import attacks
 from app import identity, legacy
 from app.config import (
     DEVICE_PSK,
+    BYPASS_MAX_DURATION_S,
+    BYPASS_REMINDER_INTERVAL_S,
     HEARTBEAT_PERIOD_S,
     HEARTBEAT_TIMEOUT_S,
     MAX_CIPHERTEXT_HEX_CHARS,
@@ -50,8 +52,12 @@ class CentralServer:
         # cannot chatter, so the lower edge it needed has nothing left to do.
         self.trip_state = "HEALTHY"
         # Maintenance bypass. An operator-authenticated state now, not a
-        # dashboard toggle anyone could reach.
+        # dashboard toggle anyone could reach. Timestamps are None while
+        # bypass is off; set together on BYPASS_ON, cleared together on
+        # BYPASS_OFF or auto-expiry.
         self.bypass = False
+        self.bypass_asserted_at = None
+        self.bypass_last_reminder_at = None
         # Dead-man heartbeat sequence on the safety link.
         self.heartbeat_seq = 0
         # Operator command nonces, so a captured signed instruction is
@@ -340,7 +346,25 @@ def decide_trip(temperature):
     through a signed RESET.
     """
     if server_engine.bypass:
-        return  # maintenance bypass asserted; logged when it was asserted
+        elapsed = time.time() - server_engine.bypass_asserted_at
+        if elapsed >= BYPASS_MAX_DURATION_S:
+            server_engine.bypass = False
+            server_engine.bypass_asserted_at = None
+            server_engine.bypass_last_reminder_at = None
+            log("ALERT", f"[SIS] Maintenance bypass auto-expired after {elapsed:.0f}s "
+                         f"(limit {BYPASS_MAX_DURATION_S:.0f}s). Trip logic re-armed.")
+            broadcast_sis_state()
+            # Falls through -- this reading is now evaluated normally, the
+            # same as any reading arriving after a manual BYPASS_OFF.
+        else:
+            if (time.time() - server_engine.bypass_last_reminder_at
+                    >= BYPASS_REMINDER_INTERVAL_S):
+                log("ALERT", f"[SIS] Maintenance bypass still asserted "
+                             f"({elapsed:.0f}s elapsed, "
+                             f"{BYPASS_MAX_DURATION_S - elapsed:.0f}s until auto-expiry). "
+                             f"Trip logic suppressed.")
+                server_engine.bypass_last_reminder_at = time.time()
+            return
 
     if temperature < server_engine.trip_setpoint:
         return
@@ -1074,10 +1098,15 @@ def _apply_operator_action(operator_id, action, value):
         clear_trip(operator_id)
     elif action == "BYPASS_ON":
         server_engine.bypass = True
+        server_engine.bypass_asserted_at = time.time()
+        server_engine.bypass_last_reminder_at = time.time()
         log("ALERT", f"[SIS] Maintenance bypass ASSERTED by {operator_id}. "
-                     f"The trip function is suspended.")
+                     f"The trip function is suspended for up to "
+                     f"{BYPASS_MAX_DURATION_S:.0f}s, then auto-expires.")
     elif action == "BYPASS_OFF":
         server_engine.bypass = False
+        server_engine.bypass_asserted_at = None
+        server_engine.bypass_last_reminder_at = None
         log("SUCCESS", f"[SIS] Maintenance bypass cleared by {operator_id}.")
     elif action == "SET_SETPOINT":
         _apply_setpoint(operator_id, value)
