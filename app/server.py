@@ -18,6 +18,7 @@ from app.config import (
     HEARTBEAT_TIMEOUT_S,
     MAX_CIPHERTEXT_HEX_CHARS,
     OPERATOR_MAX_SKEW_S,
+    OPERATOR_NONCE_STORE_PATH,
     PROJECT_ROOT,
     SERVER_HOST,
     SERVER_PORT,
@@ -41,6 +42,29 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "quantum_safe_secret_key
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 
+def _load_operator_nonces():
+    """Returns burned operator nonces still inside the replay-skew window.
+
+    A nonce older than OPERATOR_MAX_SKEW_S is already unusable -- its command's
+    own timestamp would fail the skew check regardless of the nonce set -- so
+    there is nothing to gain by keeping it, on disk or in memory.
+    """
+    try:
+        raw = json.loads(OPERATOR_NONCE_STORE_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+    now = time.time()
+    return {
+        nonce: seen_at for nonce, seen_at in raw.items()
+        if now - seen_at <= OPERATOR_MAX_SKEW_S
+    }
+
+
+def _save_operator_nonces(nonces):
+    OPERATOR_NONCE_STORE_PATH.parent.mkdir(exist_ok=True)
+    OPERATOR_NONCE_STORE_PATH.write_text(json.dumps(nonces))
+
+
 class CentralServer:
     """Holds one ML-KEM session per connected node, keyed by Socket.IO sid."""
 
@@ -62,7 +86,9 @@ class CentralServer:
         self.heartbeat_seq = 0
         # Operator command nonces, so a captured signed instruction is
         # single-use and cannot be delivered a second time during an upset.
-        self.operator_nonces = set()
+        # nonce_hex -> when it was burned; persisted so a restart cannot
+        # reopen the replay window (J-2, see _load_operator_nonces).
+        self.operator_nonces = _load_operator_nonces()
         # Which enrolled identity holds which live session. A safety transmitter
         # is a physical thing: there is exactly one TT-101 on the plant, so two
         # sessions claiming to be it means either a misconfigured second node or
@@ -1088,7 +1114,8 @@ def handle_operator_command(data):
 
     # Burn the nonce only once the signature checks out, so an attacker cannot
     # spend a legitimate operator's nonce by sending garbage that carries it.
-    server_engine.operator_nonces.add(nonce_hex)
+    server_engine.operator_nonces[nonce_hex] = time.time()
+    _save_operator_nonces(server_engine.operator_nonces)
     _apply_operator_action(operator_id, action, value)
 
 

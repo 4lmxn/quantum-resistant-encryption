@@ -69,6 +69,13 @@ SETPOINT_MAX_STEP_C = 15.0
 # How stale a signed operator command may be before the server refuses it.
 OPERATOR_MAX_SKEW_S = 30.0
 
+# Where burned operator-command nonces are persisted, so a captured command is
+# still single-use across a server restart -- an in-memory-only set forgets
+# every nonce it has seen the moment the process dies, reopening the replay
+# window for anything captured shortly before the restart (J-2). Gitignored,
+# same as the rest of `identities/`.
+OPERATOR_NONCE_STORE_PATH = PROJECT_ROOT / "identities" / "operator_nonces.json"
+
 # Dead-man heartbeat on the safety link. The actuator trips when these stop, so
 # cutting the network closes the valve instead of freezing it open.
 HEARTBEAT_PERIOD_S = 2.0

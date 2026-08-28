@@ -6,6 +6,8 @@ the signature check would only prove the mock works.
 """
 
 import os
+import pathlib
+import tempfile
 import time
 
 from app import identity, server
@@ -35,18 +37,26 @@ class FakeRegistry:
 
 
 class harness:
-    """Swaps in a fresh engine and registry for one check."""
+    """Swaps in a fresh engine and registry for one check.
+
+    The nonce store path is redirected to a scratch file first, so
+    CentralServer()'s own persisted-nonce load (J-2) never touches the real
+    `identities/operator_nonces.json` or leaks state between test runs.
+    """
 
     def __init__(self):
-        self.engine = server.CentralServer()
         self.registry = FakeRegistry()
         self.logs = []
+        self.nonce_store_path = pathlib.Path(tempfile.gettempdir()) / f"sis01_test_nonces_{id(self)}.json"
 
     def __enter__(self):
         self.original = (
             server.server_engine, server.registry, server.AUTHENTICATED,
             server.send_actuator_command, server.socketio.emit, server.log,
+            server.OPERATOR_NONCE_STORE_PATH,
         )
+        server.OPERATOR_NONCE_STORE_PATH = self.nonce_store_path
+        self.engine = server.CentralServer()
         server.server_engine = self.engine
         server.registry = self.registry
         server.AUTHENTICATED = True
@@ -57,7 +67,9 @@ class harness:
 
     def __exit__(self, *exc):
         (server.server_engine, server.registry, server.AUTHENTICATED,
-         server.send_actuator_command, server.socketio.emit, server.log) = self.original
+         server.send_actuator_command, server.socketio.emit, server.log,
+         server.OPERATOR_NONCE_STORE_PATH) = self.original
+        self.nonce_store_path.unlink(missing_ok=True)
         return False
 
     def command(self, action, value=None, operator_id=OPERATOR_ID,
@@ -239,6 +251,26 @@ def test_nothing_is_accepted_when_no_identities_are_enrolled():
         server.handle_operator_command(h.command("SET_SETPOINT", 85.0))
         assert h.engine.trip_setpoint == before
         assert h.refused(), h.logs
+
+
+def test_a_burned_nonce_survives_a_restart():
+    """J-2: a captured command must still be single-use after the server dies
+    and comes back, not just within one process's lifetime."""
+    with harness() as h:
+        payload = h.command("SET_SETPOINT", h.engine.trip_setpoint + 5.0)
+        server.handle_operator_command(payload)
+        assert not h.refused(), h.logs
+
+        # A fresh CentralServer() at the same store path is exactly what a
+        # restarted process does -- it must load the nonce back, not forget it.
+        restarted = server.CentralServer()
+        assert payload["nonce"] in restarted.operator_nonces, (
+            "a burned nonce did not survive a restart")
+
+        server.server_engine = restarted
+        h.logs.clear()
+        server.handle_operator_command(payload)  # replay against the "restarted" server
+        assert h.refused(), "a nonce burned before restart was replayable after restart"
 
 
 if __name__ == "__main__":

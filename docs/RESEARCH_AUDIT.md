@@ -83,11 +83,10 @@ physical board is available this pass — every hardware number stays
 - Reference crypto implementations (`kyber-py`, `dilithium-py`) are pure
   Python and not constant-time; side-channel resistance is unaddressed
   (`RESEARCH.md`, "No side-channel resistance").
-- Nonce/replay state (`server_engine.seen_nonces`,
-  `server_engine.operator_nonces`) is in-process memory with no persistence
-  across restart — a restarted server forgets every nonce it has seen,
-  reopening the replay window for anything captured before the restart.
-  **Not currently tested or documented as a gap; see J-2.**
+- Nonce/replay state: `operator_nonces` now persists across restart
+  (`OPERATOR_NONCE_STORE_PATH`, see J-2). `seen_nonces` remains in-process
+  only, deliberately — see J-2 for why that one is not a restart-specific
+  gap.
 
 ## C. Current safety assumptions
 
@@ -113,8 +112,11 @@ physical board is available this pass — every hardware number stays
 - A restarted server comes up `HEALTHY` (`app/server.py:49` — a fresh
   `CentralServer()` on process start) and reopens whatever valve reconnects
   to it (`app/server.py:660-666`, `sync_actuator_state`), documented in a
-  comment at `app/server.py:368` but not covered by an automated test that a
-  restart mid-trip is safely re-asserted. **Gap, see J-4.**
+  comment at `app/server.py:368`. ~~Not covered by an automated test that a
+  restart mid-trip is safely re-asserted.~~ **Closed, see J-4** —
+  `tests/test_actuator_resync.py` drives `sync_actuator_state` against a real
+  `SimulatedActuatorNode` decrypt and proves a `TRIPPED` server keeps a
+  reconnecting actuator's valve `CLOSED`.
 
 ## D. Current cryptographic assumptions
 
@@ -333,11 +335,25 @@ this codebase specifically could tempt someone to overclaim:
   research doc must describe the ten-stage reality, not the three-stage
   description.
 - **J-2. Nonce/replay state does not survive a server restart.**
-  `server_engine.seen_nonces` and `server_engine.operator_nonces`
+  ~~`server_engine.seen_nonces` and `server_engine.operator_nonces`
   (`app/server.py:57` and the `CentralServer.__init__` block) are plain
   in-process sets. No test exercises "server restarts, previously-seen nonce
   is replayed" — this is a real, currently-untested reproducibility and
-  security gap, not present in any of the 76 existing tests by name.
+  security gap.~~ **Closed (2026-08-28), operator side.**
+  `operator_nonces` is now a `nonce_hex -> burned_at` dict persisted to
+  `identities/operator_nonces.json` (`OPERATOR_NONCE_STORE_PATH`,
+  `app/config.py`) on every burn, loaded on `CentralServer.__init__`, and
+  pruned to entries still inside `OPERATOR_MAX_SKEW_S` — a nonce older than
+  that is already unusable by the timestamp check regardless of the nonce
+  set, so nothing is lost by dropping it. Covered by
+  `tests/test_operator_auth.py::test_a_burned_nonce_survives_a_restart`.
+  `seen_nonces` is deliberately left as an in-process set: it is keyed by
+  Socket.IO `sid` (`app/server.py`, `accept_heartbeat`/telemetry path), a
+  fresh value is assigned on every reconnect regardless of whether the
+  *server* or the *node* restarted, and it is already dropped on disconnect
+  (`self.seen_nonces.pop(sid, None)`) — so a server restart is not a
+  distinguishable case for that set; there is no cross-restart replay window
+  to close there.
 - **J-3. No bypass timeout or expiry.** ~~`server_engine.bypass` stays asserted
   indefinitely once set; nothing times it out, reminds an operator it is
   still asserted, or logs periodically while it stands.~~ **Closed
@@ -354,11 +370,16 @@ this codebase specifically could tempt someone to overclaim:
   automatically re-asserting the bypass (a real maintenance task that
   overruns the window has to be re-signed, which is intentional — silent
   re-assertion would defeat the point of a time-box).
-- **J-4. No automated test for restart-during-trip re-assertion.** The
+- **J-4. No automated test for restart-during-trip re-assertion.** ~~The
   comment at `app/server.py:368` documents the intended behavior (a
   reconnecting actuator is told the authoritative state); no test drives
   "server restarts while `trip_state == TRIPPED`, actuator reconnects,
-  actuator ends up `CLOSED`."
+  actuator ends up `CLOSED`."~~ **Already closed** —
+  `tests/test_actuator_resync.py::test_sync_sends_trip_when_the_server_is_tripped`
+  drives exactly that scenario against a real `SimulatedActuatorNode.process_command`
+  decrypt (not a mock), and is wired into `make test`. This bullet was stale:
+  the test already existed when this line was written; only the audit text
+  had not caught up.
 - **J-5. `bench.py` has no seed control or repeated-run aggregation across
   invocations.** Running it twice gives two independent 60-round summaries
   with no combined record; making a benchmarking claim reproducible in the
