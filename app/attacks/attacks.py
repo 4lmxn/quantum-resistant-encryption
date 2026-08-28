@@ -483,18 +483,30 @@ def stage_harvest(log, sleep, report, obtain_public_key):
     log("ATTACK",
         f"Harvest Now, Decrypt Later: session 1 key {first[:8].hex()}, "
         f"session 2 key {second[:8].hex()}")
-    log("SUCCESS" if first != second else "ERROR",
+    independent = first != second
+    log("SUCCESS" if independent else "ERROR",
         "Harvest Now, Decrypt Later: sessions share no key material")
-    report(
-        "harvest",
-        status="DEFENDED",
-        confidence="Observed",
-        evidence=f"Two connections in a row produced completely different keys "
-                 f"({first[:8].hex()} and {second[:8].hex()}), and nodes erase the key "
-                 f"from memory when they disconnect.",
-        outcome="There is no single key worth waiting for. Breaking one connection's key "
-                "in future would open that connection only — not the recording.",
-    )
+    if independent:
+        report(
+            "harvest",
+            status="DEFENDED",
+            confidence="Observed",
+            evidence=f"Two connections in a row produced completely different keys "
+                     f"({first[:8].hex()} and {second[:8].hex()}), and nodes erase the key "
+                     f"from memory when they disconnect.",
+            outcome="There is no single key worth waiting for. Breaking one connection's key "
+                    "in future would open that connection only — not the recording.",
+        )
+    else:
+        report(
+            "harvest",
+            status="INCONCLUSIVE",
+            confidence="Not run",
+            evidence=f"Two connections in a row produced the SAME key "
+                     f"({first[:8].hex()}). This does not demonstrate independence.",
+            outcome="Re-run the attack -- this indicates the demo failed to observe two "
+                    "distinct handshakes, not that the key exchange itself repeated a key.",
+        )
 
 
 def stage_grover(log, sleep, report):

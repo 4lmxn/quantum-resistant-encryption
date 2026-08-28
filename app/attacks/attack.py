@@ -26,7 +26,14 @@ def on_public_key(data):
 def obtain_public_key():
     """The server refuses unknown roles, so the attacker impersonates a sensor.
     Note what this does NOT give it: this is the attacker's own handshake, not
-    the real sensor's session."""
+    the real sensor's session.
+
+    Clears any previously intercepted key first -- callers that need two
+    independent keys (the harvest-now-decrypt-later stage) call this twice in a
+    row, and without the clear the second call would return the first call's
+    stale key instantly instead of waiting for a genuinely new handshake.
+    """
+    intercepted.pop("encapsulation_key", None)
     sio.emit("pqc_hello", {"role": "sensor"})
     for _ in range(50):
         if "encapsulation_key" in intercepted:
