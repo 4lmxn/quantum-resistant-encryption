@@ -15,6 +15,7 @@ from app.config import (
     TOPIC_HELLO,
     TOPIC_PUBKEY,
 )
+from app.nodes import relay_driver
 from app.pqc import LINK_ACTUATOR, encapsulate, key_fingerprint
 
 sio = socketio.Client()
@@ -46,6 +47,11 @@ class SimulatedActuatorNode:
         self.last_heartbeat = None
         self.last_seq = 0
         self.tripped_by_watchdog = False
+        # Fired with the new state whenever the valve actually moves -- the one
+        # choke point every mutation goes through, so a physical relay driver
+        # (app/nodes/relay_driver.py) can mirror the decision without a hook at
+        # every call site. None by default: no hardware, no-op.
+        self.on_valve_change = None
         # Command nonces already obeyed. The server refuses a repeated nonce on
         # telemetry coming in, but nothing protected this direction: a captured
         # TRIP or RESET could simply be sent again and the valve would obey it,
@@ -76,12 +82,12 @@ class SimulatedActuatorNode:
 
         command = cmd_data.get("command")
         if command == "TRIP":
-            self.valve_state = "CLOSED"
+            self._set_valve("CLOSED")
         elif command == "RESET":
             # A reset only reopens the valve. It does not clear the watchdog --
             # if the heartbeat is still missing, the watchdog trips again on its
             # next pass, which is the behaviour we want.
-            self.valve_state = "OPEN"
+            self._set_valve("OPEN")
             self.tripped_by_watchdog = False
         else:
             return False, f"Unknown Command: {command!r}"
@@ -108,6 +114,11 @@ class SimulatedActuatorNode:
         self.last_seq = seq
         self.last_heartbeat = time.monotonic()
         return True
+
+    def _set_valve(self, state):
+        self.valve_state = state
+        if self.on_valve_change:
+            self.on_valve_change(state)
 
     def heartbeat_overdue(self):
         if self.last_heartbeat is None:
@@ -224,7 +235,7 @@ def watchdog_loop():
         if not actuator.heartbeat_overdue():
             continue
         actuator.tripped_by_watchdog = True
-        actuator.valve_state = "CLOSED"
+        actuator._set_valve("CLOSED")
         print(f"[ACTUATOR] Heartbeat lost for >{HEARTBEAT_TIMEOUT_S}s. TRIPPING XV-101.")
         sio.emit("relay_log", {
             "type": "ALERT",
@@ -268,6 +279,10 @@ def on_actuator_command(packet):
 
 
 def run_actuator_node():
+    # No-op unless RELAY_SERIAL_PORT is set (relay_driver.py) -- an unplugged
+    # or absent Nano must never stop the demo running purely in software.
+    actuator.on_valve_change = relay_driver.send_valve_state
+    relay_driver.send_valve_state(actuator.valve_state)  # sync the Nano to our starting state
     sio.connect(SERVER_URL)
     try:
         sio.wait()

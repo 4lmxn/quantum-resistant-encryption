@@ -99,6 +99,7 @@ test:
 	$(PY) -m tests.test_duplicate_identity
 	$(PY) -m tests.test_command_replay
 	$(PY) -m tests.test_actuator_resync
+	$(PY) -m tests.test_relay_driver
 	$(PY) -m tests.test_http_handshake
 	$(PY) -m tests.test_pqc_interop
 	$(PY) -m tests.test_oversized_packet

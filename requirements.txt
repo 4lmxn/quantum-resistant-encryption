@@ -12,3 +12,6 @@ amqtt>=0.12
 
 # Optional — only for storing the server key in a PKCS#11 HSM (make hsm-import)
 # python-pkcs11>=0.9
+
+# Optional — only for the physical trip rig's Nano relay driver (RELAY_SERIAL_PORT)
+# pyserial>=3.5
