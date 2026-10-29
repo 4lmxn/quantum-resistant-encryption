@@ -55,7 +55,7 @@ which is exactly the default setpoint, so it can never be dunked in V-101.
 | 8 | **2-channel** 5 V relay module | opto-isolated. One channel for the valve, one for the pump | ✅ if 2-ch, else buy |
 | 9 | 12 V DC adapter, **≥ 2 A** | pump ~0.5 A + valve ~0.5 A + headroom | ✅ check rating |
 | 10 | DC barrel jack → screw terminal adapter | so you never cut the adapter lead | buy |
-| 11 | 1N4007 diodes ×2 | flyback across the valve coil and the pump | buy |
+| 11 | 1N4007 diodes ×2 | 1 A / 1000 V (1N5819 also works). Flyback: one at the valve, one at the pump. The relay module's own diode protects only its coil, not these loads | buy |
 | 12 | LEDs green / yellow / red + 220 Ω ×3 | status lamps on the ESP32 | buy 2 + 2 resistors |
 | 13 | T-100: clear plastic box, 2–3 L | wide enough for the pump and V-101 side by side | buy |
 | 14 | V-101: small clear jar, ~250 ml | stands inside T-100, lower than its rim | buy |
@@ -109,9 +109,30 @@ adapter +12V ── barrel terminal + ──┬── relay CH1 COM
                                     └── relay CH2 COM
 relay CH1 NO ── XV-101 (+)     XV-101 (−) ── adapter −
 relay CH2 NO ── P-101  (+)     P-101  (−) ── adapter −
-1N4007 across XV-101: stripe to (+)
-1N4007 across P-101:  stripe to (+)
+D1 1N4007 across XV-101: stripe to (+)
+D2 1N4007 across P-101:  stripe to (+)
 ```
+
+**Flyback diodes (D1, D2).** The valve coil and the pump motor store energy
+in a magnetic field. When the relay opens to trip the plant, that energy has
+nowhere to go and becomes a spike of several hundred volts. Without a diode
+it arcs across the relay contacts every trip. Over time the contacts can weld
+shut, which holds the valve **open**: the one failure this system must never
+have. The noise can also reset the Uno, giving trips nobody can explain. With
+a diode, the spike circulates through the diode and the coil and dies there.
+
+```
++12 V (relay NO) ──┬──────────── coil (+)
+                   │ ▲ 1N4007, stripe (cathode) on this side
+12 V −  ───────────┴──────────── coil (−)
+```
+
+- Fit each diode at the load's own terminals, not back at the relay.
+- **Backwards is a short circuit.** With the stripe on the − side, the diode
+  shorts the 12 V supply the moment the relay closes: it overheats or the
+  adapter cuts out. Check the stripe before powering on.
+- A valve with polarity-marked leads may already contain a diode. A second
+  one in the same direction does no harm.
 
 - Use **NO** contacts, not NC. A dead Nano, a pulled USB cable or a dead 12 V
   supply then leaves both outputs de-energised, so the valve is spring-closed
