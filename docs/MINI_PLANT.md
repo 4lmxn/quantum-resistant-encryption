@@ -165,6 +165,13 @@ a diode, the spike circulates through the diode and the coil and dies there.
 Test each stage on its own before connecting the next. That way a fault is
 always in the last thing you added.
 
+0. **Preflight on the Mac:** `make rig-check`. It lists every problem it can
+   see before you touch the hardware, each with its fix: pyserial, the relay
+   board, enrolled identities, whether `keys.h` still matches them, the Mac's
+   LAN address against the ESP32's server setting, the server, the macOS
+   firewall, and the Arduino toolchain. Run it again after each stage below.
+   `make rig-check ARGS=--click` pulses both relays for 1.5 s once the Uno is
+   connected.
 1. **12 V only:** jumper the pump straight to 12 V with the tube into V-101.
    Water should flow. Then add the valve unpowered: flow must stop. Power the
    valve: flow resumes.
@@ -173,17 +180,35 @@ always in the last thing you added.
    3 s later. That is the link watchdog working. Send `0`: they stay off.
 3. **Relay + 12 V:** connect the 12 V side and repeat step 2. Water starts,
    then stops by itself 3 s later.
-4. **ESP32:** run `make enroll && make firmware-keys` once. Set `WIFI_SSID`,
-   `WIFI_PASS` and `SERVER` in `sketch_pqc.ino`, then upload. With
-   `make server` running, the Serial Monitor shows
+4. **ESP32:** run `make enroll && make firmware-keys` once, then upload
+   `sketch_pqc.ino`. You do not need to edit the WiFi or server in the code:
+   open the Serial Monitor at **115200**, line ending **Newline**, and type
+   ```
+   wifi "Your Network" yourpassword
+   server http://192.168.1.36:5001
+   show
+   ```
+   using the Mac address `make rig-check` prints. The settings are saved on the
+   board and survive a power cycle, so a new venue only needs these two lines
+   again, never a reflash. `help` lists the commands; `forget` clears the
+   saved settings. With `make server` running the board prints
    `[PQC] Session established`, and the yellow LED goes off and green comes on.
+
+   The ESP32 refuses any server whose offer is not signed by the key in its
+   `keys.h`, so pointing it at the wrong address gets no session, never a fake
+   one. If it aborts with `server signature invalid`, `keys.h` is older than
+   your last `make enroll`: run `make firmware-keys` and reflash. `make
+   rig-check` spots this before you start.
 5. **Everything:**
    ```bash
-   make server                                            # terminal 1
-   .venv/bin/pip install pyserial                         # once
-   ls /dev/cu.usbmodem* /dev/cu.usbserial*                # find the Nano/Uno
-   RELAY_SERIAL_PORT=/dev/cu.usbmodemXXXX make actuator   # terminal 2
+   make server     # terminal 1
+   make rig        # terminal 2: the actuator, which finds the Uno by itself
    ```
+   `make rig` probes the USB-serial ports and takes the one that prints the
+   relay sketch's `[NANO RELAY]` boot banner, so an ESP32 on the same kind of
+   USB chip is never mistaken for it. It logs which port it chose. With no
+   board found it runs in software only; plug the Uno in and restart it. To
+   pin a port instead: `RELAY_SERIAL_PORT=/dev/cu.usbmodemXXXX make actuator`.
    The relays click and water flows. **Do not run `make sensor`.** The ESP32
    is TT-101 now, and a second simulated transmitter on the safety lane would
    trip the plant on numbers nobody is measuring.

@@ -4,7 +4,7 @@ PY := .venv/bin/python
 .PHONY: help install certs server sensor actuator device attack broker \
         server-mqtt sensor-mqtt actuator-mqtt test test-device clean \
         firmware firmware-pqc firmware-pqc-node firmware-keys pqc-interop firmware-setup sensor-legacy enroll bench operator hsm-import \
-        bench-crypto bench-safety bench-safety-cpu
+        bench-crypto bench-safety bench-safety-cpu rig rig-check
 
 help:
 	@echo "Setup:"
@@ -20,6 +20,8 @@ help:
 	@echo "  make server         central server + dashboard on :5001"
 	@echo "  make sensor         thermometer node"
 	@echo "  make actuator       fan node"
+	@echo "  make rig            actuator + auto-detected Uno relay board (physical rig)"
+	@echo "  make rig-check      preflight for the physical rig (ARGS=--click pulses the relays)"
 	@echo "  make device         ESP32 stand-in (no hardware needed)"
 	@echo "  make sensor-legacy  classical RSA node — attack 1 breaks this one"
 	@echo "  make attack         run the full attack sequence"
@@ -71,6 +73,12 @@ sensor-legacy:      ## classical RSA channel, so attack 1 has something to break
 actuator:
 	$(PY) -m app.nodes.actuator
 
+rig:                ## actuator node driving the physical relay; finds the Uno itself
+	RELAY_SERIAL_PORT=auto $(PY) -m app.nodes.actuator
+
+rig-check:          ## preflight for the physical rig; ARGS=--click pulses both relays
+	$(PY) -m scripts.rig_check $(ARGS)
+
 device:
 	$(PY) -m app.nodes.device_sim
 
@@ -96,12 +104,15 @@ test:
 	$(PY) -m tests.test_identity
 	$(PY) -m tests.test_concurrent_signing
 	$(PY) -m tests.test_rogue_stage
+	$(PY) -m tests.test_http_pending_bound
 	$(PY) -m tests.test_operator_auth
 	$(PY) -m tests.test_heartbeat
 	$(PY) -m tests.test_duplicate_identity
 	$(PY) -m tests.test_command_replay
 	$(PY) -m tests.test_actuator_resync
 	$(PY) -m tests.test_relay_driver
+	$(PY) -m tests.test_relay_autodetect
+	$(PY) -m tests.test_rig_check
 	$(PY) -m tests.test_http_handshake
 	$(PY) -m tests.test_pqc_interop
 	$(PY) -m tests.test_oversized_packet
