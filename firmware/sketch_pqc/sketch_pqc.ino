@@ -25,16 +25,15 @@
  * row inserted leaves four free holes above every pin. Software SPI, so any
  * GPIO works for the MAX6675.
  *
- * Three lamps mirror what the server reports (external LEDs via 220R to GND):
- *   HEALTHY GPIO 2  = confirmed by the server on the last reading. GPIO 2 is
- *                     the onboard LED on most DevKits; with a green LED, wire
- *                     it to GPIO 14 and set HEALTHY_LED_PIN to 14.
- *   TRIPPED GPIO 26 = steady: latched until a signed operator RESET
- *   FAULT   GPIO 25 = blinking: no WiFi, no session, server unreachable, or
- *                     sensor failed. Healthy goes dark with it -- the board
- *                     will not vouch for a plant state it could not confirm.
- * The fault lamp blinks rather than glowing steady so the rig works with two
- * LEDs of the same colour: steady means tripped, blinking means fault.
+ * Two same-colour LEDs (GPIO 25 and 26, via 220R to GND) mirror what the
+ * server reports, as three patterns readable from the back of a room:
+ *   HEALTHY = GPIO 25 alone, slow blink (1 s on / 1 s off): a heartbeat --
+ *             a frozen board cannot fake it
+ *   TRIPPED = both steady: latched until a signed operator RESET
+ *   FAULT   = both fast blink together: no WiFi, no session, server
+ *             unreachable, or sensor failed. The board will not vouch for a
+ *             plant state it could not confirm.
+ * The onboard LED (GPIO 2) also lights while the server confirms HEALTHY.
  *
  * ML-DSA-65 needs ~78 KB of stack to sign and ~56 KB to verify, so the
  * handshake runs in a dedicated 96 KB FreeRTOS task created once at boot, not
@@ -86,9 +85,9 @@ static const int TC_CS_PIN = 33;
 static const int DHT_PIN = 13;
 
 static const int HEALTHY_LED_PIN = 2;   // onboard LED; e.g. 14 for an external green
-static const int FAULT_LED_PIN = 25;
+static const int STATUS_LED_PIN = 25;   // heartbeat when healthy
 static const int TRIPPED_LED_PIN = 26;
-static const uint32_t FAULT_BLINK_MS = 250;
+static const uint32_t LAMP_TICK_MS = 250;  // fault blink half-period; heartbeat is 4 ticks
 
 #if TT101_MAX6675
 static const char *SENSOR_NAME = "MAX6675 K-type thermocouple";
@@ -547,30 +546,47 @@ static void startHandshake() {
 
 // ---------------------------------------------------------------- lamps -----
 
-static volatile bool g_fault = true;  // fault until the server confirms otherwise
+enum LampMode : uint8_t { LAMP_FAULT, LAMP_HEALTHY, LAMP_TRIPPED };
+static volatile LampMode g_lamp = LAMP_FAULT;  // fault until the server confirms otherwise
 
-// The blink runs from a FreeRTOS timer, not loop(), so it keeps going while a
-// telemetry post holds the loop for up to a few seconds. A frozen lamp would
+// The patterns run from a FreeRTOS timer, not loop(), so they keep going while
+// a telemetry post holds the loop for up to a few seconds. A frozen lamp would
 // read as steady, which on this rig means tripped.
-static void faultBlink(TimerHandle_t) {
-  static bool lit = false;  // tracked here: reading back an OUTPUT pin is not reliable on every core
-  lit = g_fault && !lit;
-  digitalWrite(FAULT_LED_PIN, lit ? HIGH : LOW);
+static void lampTick(TimerHandle_t) {
+  static uint8_t tick = 0;
+  tick++;
+  const bool fast = tick & 1;         // 250 ms on / 250 ms off
+  const bool slow = (tick >> 2) & 1;  // 1 s on / 1 s off
+  switch (g_lamp) {
+    case LAMP_HEALTHY:
+      digitalWrite(STATUS_LED_PIN, slow ? HIGH : LOW);
+      digitalWrite(TRIPPED_LED_PIN, LOW);
+      break;
+    case LAMP_TRIPPED:
+      digitalWrite(STATUS_LED_PIN, HIGH);
+      digitalWrite(TRIPPED_LED_PIN, HIGH);
+      break;
+    default:
+      digitalWrite(STATUS_LED_PIN, fast ? HIGH : LOW);
+      digitalWrite(TRIPPED_LED_PIN, fast ? HIGH : LOW);
+      break;
+  }
 }
 
-// Unknown plant state: fault lamp blinking, healthy off. The tripped lamp keeps
-// its last confirmed value -- a latched trip does not clear because the link
-// dropped.
+// Unknown plant state: both lamps fast-blink, healthy off. The server still
+// holds any latched trip; it reappears as steady once the link is back.
 static void showFault() {
-  g_fault = true;
+  g_lamp = LAMP_FAULT;
   digitalWrite(HEALTHY_LED_PIN, LOW);
 }
 
 static void showPlantState(bool tripped) {
-  g_fault = false;
-  digitalWrite(FAULT_LED_PIN, LOW);
+  g_lamp = tripped ? LAMP_TRIPPED : LAMP_HEALTHY;
+  if (tripped) {  // light the trip at once, not on the next tick
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    digitalWrite(TRIPPED_LED_PIN, HIGH);
+  }
   digitalWrite(HEALTHY_LED_PIN, tripped ? LOW : HIGH);
-  digitalWrite(TRIPPED_LED_PIN, tripped ? HIGH : LOW);
 }
 
 // ---------------------------------------------------------------- sensor ----
@@ -786,12 +802,12 @@ void setup() {
   delay(600);
 
   pinMode(HEALTHY_LED_PIN, OUTPUT);
-  pinMode(FAULT_LED_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
   pinMode(TRIPPED_LED_PIN, OUTPUT);
-  TimerHandle_t blink = xTimerCreate("fault-lamp", pdMS_TO_TICKS(FAULT_BLINK_MS), pdTRUE,
-                                     nullptr, faultBlink);
-  if (blink == nullptr || xTimerStart(blink, 0) != pdPASS) {
-    Serial.println("[BOOT] fault-lamp timer failed; fault lamp will not blink");
+  TimerHandle_t lamps = xTimerCreate("lamps", pdMS_TO_TICKS(LAMP_TICK_MS), pdTRUE,
+                                     nullptr, lampTick);
+  if (lamps == nullptr || xTimerStart(lamps, 0) != pdPASS) {
+    Serial.println("[BOOT] lamp timer failed; lamps will not blink");
   }
 #if TT101_MAX6675
   thermocouple.begin();

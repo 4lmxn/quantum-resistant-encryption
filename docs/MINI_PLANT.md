@@ -56,7 +56,7 @@ which is exactly the default setpoint, so it can never be dunked in V-101.
 | 9 | 12 V DC adapter, **≥ 2 A** | pump ~0.5 A + valve ~0.5 A + headroom | ✅ check rating |
 | 10 | Female DC barrel pigtail (or barrel → screw terminal) | the adapter plugs in; red = +12 V, black = −, so the adapter lead stays uncut | ✅ |
 | 11 | 1N4007 diodes ×2 | 1 A / 1000 V (1N5819 also works); check the body reads `4007`. Flyback: one at the valve, one at the pump. The relay module's own diode protects only its coil, not these loads | ✅ |
-| 12 | Red LEDs ×2 + 220 Ω ×2 | trip lamp (steady) and fault lamp (blinking); healthy is the onboard LED | ✅ |
+| 12 | Red LEDs ×2 + 220 Ω ×2 | status lamps: one slow blink = healthy, both steady = tripped, both fast blink = fault | ✅ |
 | 13 | T-100: clear plastic box, 2–3 L | wide enough for the pump and V-101 side by side | buy |
 | 14 | V-101: small clear jar, ~250 ml | stands inside T-100, lower than its rim | buy |
 | 15 | Drip tray or baking tray | the whole plant stands in it | buy |
@@ -89,13 +89,17 @@ free holes beside it. The sensor uses software SPI, so any GPIO works.
 | GPIO 27 | MAX6675 SCK |
 | GPIO 32 | MAX6675 SO |
 | GPIO 33 | MAX6675 CS |
-| GPIO 26 → 220 Ω → | red LED anode: **TRIPPED**, steady, until a signed reset |
-| GPIO 25 → 220 Ω → | red LED anode: **FAULT**, blinking (no WiFi, no session, server down, probe failed) |
-| GPIO 2 | onboard LED: **HEALTHY**. Nothing to wire on most DevKits |
+| GPIO 25 → 220 Ω → | red LED anode: status lamp |
+| GPIO 26 → 220 Ω → | red LED anode: trip lamp |
+| GPIO 2 | onboard LED: lit while the server confirms HEALTHY. Nothing to wire |
 
-Two LEDs of the same colour work because the fault lamp **blinks** and the
-trip lamp is **steady**. If your board has no onboard LED on GPIO 2, wire a
-green LED to GPIO 25 and set `HEALTHY_LED_PIN` to 25 in `sketch_pqc.ino`.
+Two LEDs of the same colour, three patterns:
+
+| Pattern | Means |
+|---|---|
+| GPIO 25 alone, slow blink (1 s on / 1 s off) | **HEALTHY**: the heartbeat a frozen board cannot fake |
+| Both steady | **TRIPPED**, latched until a signed reset |
+| Both fast blink together | **FAULT**: no WiFi, no session, server down, probe failed |
 
 Power it over USB from the laptop or a power bank. The ESP32 has no wired link
 to the Nano: its only path to the valve is through the server and the actuator
@@ -222,7 +226,7 @@ always in the last thing you added.
    board and survive a power cycle, so a new venue only needs these two lines
    again, never a reflash. `help` lists the commands; `forget` clears the
    saved settings. With `make server` running the board prints
-   `[PQC] Session established`, the fault red stops blinking and the onboard LED lights.
+   `[PQC] Session established`, the fast blink becomes one slow heartbeat and the onboard LED lights.
 
    The ESP32 refuses any server whose offer is not signed by the key in its
    `keys.h`, so pointing it at the wrong address gets no session, never a fake
@@ -250,7 +254,7 @@ the table at each beat.
 
 | Beat | You do | Table | Dashboard |
 |---|---|---|---|
-| Handshake | power the ESP32 | fault red stops blinking, onboard LED on | esp32-01 in the PQC table, fingerprints agree |
+| Handshake | power the ESP32 | fast blink becomes one slow heartbeat, onboard LED on | esp32-01 in the PQC table, fingerprints agree |
 | Normal running | nothing | water circulating | live TT-101 ≈ room temperature |
 | Signed setpoint | `make operator ARGS="setpoint 65"`, then `"setpoint 50"` | nothing moves | setpoint 80 → 65 → 50, green logs |
 | Signature is not enough | `make operator ARGS="setpoint 120"` | nothing moves | REFUSED: step > 15 °C, despite a valid signature |
@@ -260,9 +264,9 @@ the table at each beat.
 | Bypass | `make operator ARGS="bypass on"`, pour hot water | flow keeps running, no trip | BYPASS banner, time-boxed |
 | Manual ESD | ESD button on dashboard | flow stops | TRIPPED by operator |
 | Attacks | `make attack` | **nothing moves** | forged packets rejected in red |
-| Cut the network | Ctrl-C the server | flow stops within 6 s, fault red blinks | — |
+| Cut the network | Ctrl-C the server | flow stops within 6 s, both reds fast-blink | — |
 | Kill the actuator | Ctrl-C terminal 2 | flow stops within 3 s | — |
-| Probe failure | unplug the thermocouple | fault red blinks, onboard LED off | readings stop, never a fake value |
+| Probe failure | unplug the thermocouple | both reds fast-blink, onboard LED off | readings stop, never a fake value |
 
 Before the bypass beat, run `make operator ARGS="bypass off"` and `reset` if
 the latch is set, so each beat starts from HEALTHY.
