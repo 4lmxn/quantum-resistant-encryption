@@ -39,7 +39,7 @@
 
 const int VALVE_PIN = 2;  // relay channel 1 -- XV-101 solenoid valve
 const int PUMP_PIN = 3;   // relay channel 2 -- P-101 circulation pump
-const bool RELAY_ACTIVE_LOW = false;
+const bool RELAY_ACTIVE_LOW = true;  // 2-ch opto board with JD-VCC jumper, no H/L jumper
 const unsigned long LINK_TIMEOUT_MS = 3000;  // 3 missed keepalives
 
 bool running = false;
@@ -67,6 +67,10 @@ void setPlant(bool run, const char *why) {
 }
 
 void setup() {
+  // Set the de-energised level before the pin becomes an output, so an
+  // active-LOW board never sees a LOW pulse (valve open) during boot.
+  writeRelay(PUMP_PIN, false);
+  writeRelay(VALVE_PIN, false);
   pinMode(VALVE_PIN, OUTPUT);
   pinMode(PUMP_PIN, OUTPUT);
   Serial.begin(9600);

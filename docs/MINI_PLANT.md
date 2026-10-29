@@ -52,7 +52,7 @@ which is exactly the default setpoint, so it can never be dunked in V-101.
 | 5 | 12 V solenoid valve | **Normally Closed**, **direct-acting / 0 MPa minimum pressure**, plastic body, barbs that match your tube | ✅ check spec |
 | 6 | 12 V DC submersible pump | brushless DC, ~200–300 L/h, **DC not mains**. Polarity-sensitive: if you cut its barrel plug, the centre pin was + | ✅ SHAFI, ≈ 4 W |
 | 7 | Clear tubing ~1.5 m | inner diameter = the pump outlet and valve barbs (usually 8 mm). Zip ties for clamps | buy |
-| 8 | 5 V relay module | contacts ≥ 10 A / 30 V DC. One channel switches both loads, because the pump always follows the valve. On a 2-channel board use K1 and keep K2 spare; set its trigger jumper to **H** | ✅ 2-channel |
+| 8 | 5 V relay module | contacts ≥ 10 A / 30 V DC. One channel switches both loads, because the pump always follows the valve. On a 2-channel board use K1 and keep K2 spare; the procured board is active-LOW | ✅ 2-channel |
 | 9 | 12 V DC adapter, **≥ 2 A** | pump ~0.5 A + valve ~0.5 A + headroom | ✅ check rating |
 | 10 | Female DC barrel pigtail (or barrel → screw terminal) | the adapter plugs in; red = +12 V, black = −, so the adapter lead stays uncut | ✅ |
 | 11 | 1N4007 diodes ×2 | 1 A / 1000 V (1N5819 also works); check the body reads `4007`. Flyback: one at the valve, one at the pump. The relay module's own diode protects only its coil, not these loads | ✅ |
@@ -109,10 +109,11 @@ node, which is the point of the architecture.
 | GND | GND |
 | D2 | IN1 (K1): XV-101 and P-101 together |
 
-D3 and IN2 are left unconnected; K2 is a spare. Set the module's trigger
-jumper to **H** to match `RELAY_ACTIVE_LOW = false` in the sketch. If the
-relay still clicks on the moment the Uno powers up, it triggers on LOW: set
-`RELAY_ACTIVE_LOW = true` and re-upload.
+D3 and IN2 are left unconnected; K2 is a spare. The procured 2-channel opto
+board (header GND / IN1 / IN2 / VCC, yellow JD-VCC jumper, no H/L jumper)
+switches on LOW, so the sketch ships with `RELAY_ACTIVE_LOW = true`. Leave the
+JD-VCC jumper in place. A board with an H/L trigger jumper set to **H** needs
+`RELAY_ACTIVE_LOW = false` instead.
 
 USB goes to the Mac running `make actuator`. Upload
 `firmware/nano_relay/nano_relay.ino` (board: Arduino Uno or Nano).
