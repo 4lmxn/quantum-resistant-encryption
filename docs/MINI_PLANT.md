@@ -35,8 +35,8 @@ means XV-101 closes and P-101 stops.
 
 | Value | Sensor | Pins |
 |---|---|---|
-| `1` (default) | MAX6675 + K-type thermocouple | SCK 18, SO 19, CS 5 |
-| `0` | DHT22, for the bench before the MAX6675 arrives | data 15 |
+| `1` (default) | MAX6675 + K-type thermocouple | SCK 27, SO 32, CS 33 |
+| `0` | DHT22, for the bench before the MAX6675 arrives | data 13 |
 
 Use the MAX6675 for the plant. A DHT22 is not waterproof and stops at 80 °C,
 which is exactly the default setpoint, so it can never be dunked in V-101.
@@ -75,15 +75,22 @@ pass.
 
 ### ESP32: TT-101 and status lamps
 
+**Seat the ESP32 on one header row only.** The 38-pin DevKit is too wide for a
+single breadboard: across the centre gap, the only holes joined to its pins
+are under the board. Push just the row carrying 3V3, GND and GPIO 25–33 into
+the outermost row of holes and let the board hang off the edge (prop it up so
+the other row touches nothing). Every pin below is on that row, so each has
+free holes beside it. The sensor uses software SPI, so any GPIO works.
+
 | ESP32 | To |
 |---|---|
 | 3V3 | MAX6675 VCC |
 | GND | MAX6675 GND, all LED cathodes |
-| GPIO 18 | MAX6675 SCK |
-| GPIO 19 | MAX6675 SO |
-| GPIO 5 | MAX6675 CS |
-| GPIO 27 → 220 Ω → | red LED anode: **TRIPPED**, steady, until a signed reset |
-| GPIO 26 → 220 Ω → | red LED anode: **FAULT**, blinking (no WiFi, no session, server down, probe failed) |
+| GPIO 27 | MAX6675 SCK |
+| GPIO 32 | MAX6675 SO |
+| GPIO 33 | MAX6675 CS |
+| GPIO 26 → 220 Ω → | red LED anode: **TRIPPED**, steady, until a signed reset |
+| GPIO 25 → 220 Ω → | red LED anode: **FAULT**, blinking (no WiFi, no session, server down, probe failed) |
 | GPIO 2 | onboard LED: **HEALTHY**. Nothing to wire on most DevKits |
 
 Two LEDs of the same colour work because the fault lamp **blinks** and the

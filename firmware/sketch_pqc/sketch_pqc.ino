@@ -15,15 +15,22 @@
  * This board is TT-101 on the mini plant (docs/MINI_PLANT.md). Its reading is
  * a real safety-lane input: at or above the setpoint the server latches a trip
  * and the actuator closes XV-101. Sensor, chosen by TT101_MAX6675 below:
- *   MAX6675 + K-type probe: SCK 18, SO 19, CS 5 (the real design)
- *   DHT22 fallback:         data on GPIO 15 (max 80 C -- the setpoint ceiling)
+ *   MAX6675 + K-type probe: SCK 27, SO 32, CS 33 (the real design)
+ *   DHT22 fallback:         data on GPIO 13 (max 80 C -- the setpoint ceiling)
+ *
+ * Every pin the rig uses -- 3V3, GND, 25, 26, 27, 32, 33, 13 -- sits on ONE
+ * header row of the 38-pin DevKit. That board is too wide for a single
+ * breadboard: seated across the centre gap, the only holes joined to its pins
+ * are under the board itself. Hanging it off the breadboard edge with just this
+ * row inserted leaves four free holes above every pin. Software SPI, so any
+ * GPIO works for the MAX6675.
  *
  * Three lamps mirror what the server reports (external LEDs via 220R to GND):
  *   HEALTHY GPIO 2  = confirmed by the server on the last reading. GPIO 2 is
  *                     the onboard LED on most DevKits; with a green LED, wire
- *                     it to GPIO 25 and set HEALTHY_LED_PIN to 25.
- *   TRIPPED GPIO 27 = steady: latched until a signed operator RESET
- *   FAULT   GPIO 26 = blinking: no WiFi, no session, server unreachable, or
+ *                     it to GPIO 14 and set HEALTHY_LED_PIN to 14.
+ *   TRIPPED GPIO 26 = steady: latched until a signed operator RESET
+ *   FAULT   GPIO 25 = blinking: no WiFi, no session, server unreachable, or
  *                     sensor failed. Healthy goes dark with it -- the board
  *                     will not vouch for a plant state it could not confirm.
  * The fault lamp blinks rather than glowing steady so the rig works with two
@@ -73,14 +80,14 @@ static const char *ROLE = "sensor";
 static const char *LINK_LABEL = "quantum-iot/sensor-link/aes256gcm";
 static const char *TRANSCRIPT_PREFIX = "quantum-iot/v1|sensor|";
 
-static const int TC_SCK_PIN = 18;
-static const int TC_SO_PIN = 19;
-static const int TC_CS_PIN = 5;
-static const int DHT_PIN = 15;
+static const int TC_SCK_PIN = 27;
+static const int TC_SO_PIN = 32;
+static const int TC_CS_PIN = 33;
+static const int DHT_PIN = 13;
 
-static const int HEALTHY_LED_PIN = 2;   // onboard LED; 25 for an external green
-static const int FAULT_LED_PIN = 26;
-static const int TRIPPED_LED_PIN = 27;
+static const int HEALTHY_LED_PIN = 2;   // onboard LED; e.g. 14 for an external green
+static const int FAULT_LED_PIN = 25;
+static const int TRIPPED_LED_PIN = 26;
 static const uint32_t FAULT_BLINK_MS = 250;
 
 #if TT101_MAX6675
@@ -580,7 +587,7 @@ static float readProcessTemperature(float *humidity) {
     return NAN;
   }
   if (status != STATUS_OK) {
-    Serial.printf("[SENSOR] MAX6675: no SPI answer (status 0x%02X) -- check GPIO 18/19/5 and 3V3\n", status);
+    Serial.printf("[SENSOR] MAX6675: no SPI answer (status 0x%02X) -- check GPIO 27/32/33 and 3V3\n", status);
     return NAN;
   }
   // Bits 15 and 1 of a real MAX6675 frame are always 0. An all-zero frame is
@@ -588,7 +595,7 @@ static float readProcessTemperature(float *humidity) {
   // confident 0.00 C, so it is refused too -- at the price of a genuine
   // 0.00 C reading in ice water also showing FAULT.
   if (raw == 0 || (raw & 0x8002)) {
-    Serial.printf("[SENSOR] MAX6675: implausible SPI frame 0x%04X -- check GPIO 18/19/5\n", raw);
+    Serial.printf("[SENSOR] MAX6675: implausible SPI frame 0x%04X -- check GPIO 27/32/33\n", raw);
     return NAN;
   }
   *humidity = NAN;  // not measured; sealAndPost omits the key in this mode
