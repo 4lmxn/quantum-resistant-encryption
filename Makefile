@@ -94,6 +94,8 @@ test:
 	$(PY) -m tests.test_trip_logic
 	$(PY) -m tests.test_safety_invariants
 	$(PY) -m tests.test_identity
+	$(PY) -m tests.test_concurrent_signing
+	$(PY) -m tests.test_rogue_stage
 	$(PY) -m tests.test_operator_auth
 	$(PY) -m tests.test_heartbeat
 	$(PY) -m tests.test_duplicate_identity
@@ -105,6 +107,7 @@ test:
 	$(PY) -m tests.test_oversized_packet
 	$(PY) -m tests.test_firmware_e2e
 	$(PY) -m tests.test_hsm
+	$(PY) -m tests.test_dashboard_contract
 	@echo "(test_device_leg needs a running server: make server, then make test-device)"
 
 test-device:

@@ -17,6 +17,9 @@ import time
 _PORT = os.environ.get("RELAY_SERIAL_PORT")
 _BAUD = int(os.environ.get("RELAY_SERIAL_BAUD", "9600"))
 _conn = None  # None = not tried yet, False = tried and failed, else an open Serial
+# Whether the most recent write reached the port. An open port the Nano has
+# stopped accepting is not a link, so status() needs both.
+_last_write_ok = False
 
 
 def _connect():
@@ -45,10 +48,28 @@ def send_valve_state(state):
     this byte is the ONLY thing holding it open. Losing this link, same as
     losing the heartbeat, fails the valve shut.
     """
+    global _last_write_ok
     conn = _connect()
     if not conn:
+        _last_write_ok = False
         return
     try:
         conn.write(b"1\n" if state == "OPEN" else b"0\n")
+        _last_write_ok = True
     except Exception as exc:
+        _last_write_ok = False
         print(f"[RELAY] Write failed: {exc}")
+
+
+def status():
+    """The relay link as the dashboard shows it.
+
+    connected means the port is open AND the last write landed. It is the
+    keepalive the Nano's own watchdog depends on, so a port that opened once
+    and then stopped taking bytes must read as disconnected.
+    """
+    return {
+        "configured": bool(_PORT),
+        "connected": bool(_conn) and _last_write_ok,
+        "port": _PORT or None,
+    }

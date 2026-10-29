@@ -97,7 +97,10 @@ BYPASS_REMINDER_INTERVAL_S = 30.0
 # Port 5000 is occupied by AirPlay Receiver on macOS, hence 5001.
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5001
-SERVER_URL = "http://127.0.0.1:5001"
+# Where nodes, the operator console and `make attack` find the server. An
+# override, so `SIS_SERVER_URL=http://192.168.1.7:5001 make attack` from a
+# second laptop targets the real plant rather than a local one.
+SERVER_URL = os.environ.get("SIS_SERVER_URL", "http://127.0.0.1:5001")
 
 # MQTT transport (report §3.1: MQTT over TLS 1.3). The Socket.IO path above
 # still serves the browser dashboard, which is a UI client, not an IoT node.

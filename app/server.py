@@ -1,7 +1,9 @@
 import argparse
 import json
+import math
 import os
 import secrets
+import threading
 import time
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -253,8 +255,21 @@ def log(log_type, msg):
 ATTACK_RESULTS_DIR = PROJECT_ROOT / "results" / "attacks"
 
 
-def report_attack(identifier, status, confidence, evidence, outcome):
-    """Publishes a full finding: name, severity, target, evidence, mitigation."""
+def plant_snapshot():
+    """Valve and latch right now, for a finding's before/after comparison."""
+    return {"valve": valve_position(), "trip": server_engine.trip_state}
+
+
+def report_attack(identifier, status, confidence, evidence, outcome, physical_before=None):
+    """Publishes a full finding: name, severity, target, evidence, mitigation.
+
+    `physical` puts the plant's state beside the verdict, so "DEFENDED" can be
+    checked against what the valve actually did rather than taken on trust.
+    physical_before is the snapshot taken as the stage started; without one the
+    before and after are the same instant.
+    """
+    before = physical_before or plant_snapshot()
+    after = plant_snapshot()
     record = dict(attacks.describe(identifier))
     record.update(
         id=identifier,
@@ -263,6 +278,10 @@ def report_attack(identifier, status, confidence, evidence, outcome):
         evidence=evidence,
         outcome=outcome,
         detected_at=time.strftime("%H:%M:%S"),
+        physical={
+            "valve_before": before["valve"], "valve_after": after["valve"],
+            "trip_before": before["trip"], "trip_after": after["trip"],
+        },
     )
     server_engine.findings[identifier] = record
     socketio.emit("attack_result", record)
@@ -289,7 +308,25 @@ def broadcast_pqc_status():
     socketio.emit("pqc_status", {"sessions": list(server_engine.sessions.values())})
 
 
-def process_telemetry(data, source, packet=None, safety_relevant=True):
+def device_id_for(sid):
+    """The enrolled identity holding this session, or None.
+
+    Taken from the server's own record of who completed the signed handshake,
+    never from anything the client says about itself afterwards.
+    """
+    for device_id, held_by in server_engine.active_devices.items():
+        if held_by == sid:
+            return device_id
+    return None
+
+
+def _short_str(value, limit=64):
+    """A client-supplied label, or None if it is not a string. Capped, because
+    it is re-broadcast to every dashboard."""
+    return value[:limit] if isinstance(value, str) else None
+
+
+def process_telemetry(data, source, packet=None, safety_relevant=True, device_id=None):
     """Shared handling for the Socket.IO nodes and the ESP32 HTTP leg.
 
     `safety_relevant` is the whole point of the split. The ESP32 runs on a
@@ -318,7 +355,13 @@ def process_telemetry(data, source, packet=None, safety_relevant=True):
         "update_telemetry",
         {
             "temp": data["temperature"],
-            "humidity": data["humidity"],
+            # A thermocouple (MAX6675) measures temperature only and sends no
+            # humidity key; null says "not measured", which a made-up number
+            # would hide.
+            "humidity": data.get("humidity"),
+            "sensor": _short_str(data.get("sensor"), 32),
+            "device_id": device_id,
+            "received_at": int(time.time() * 1000),
             # Never label the BPCS leg with the KEM it does not use. That leg is
             # sealed with the provisioned device key, and saying otherwise on the
             # dashboard would quietly undo the whole point of splitting the lanes.
@@ -605,7 +648,8 @@ def http_telemetry():
         log("ERROR", "[SERVER] REPLAY BLOCKED: this ESP32 packet was already accepted.")
         return {"status": "replay"}, 409
     source = f"{device_id or 'ESP32'} (ML-KEM-768)" if authenticated else "ESP32 node (unprovisioned PSK)"
-    process_telemetry(data, source, packet, safety_relevant=authenticated)
+    process_telemetry(data, source, packet, safety_relevant=authenticated,
+                      device_id=device_id or None)
     return {
         "status": "accepted",
         "setpoint": server_engine.trip_setpoint,
@@ -764,7 +808,7 @@ def handle_sensor_telemetry(packet):
     try:
         data = server_engine.decrypt_sensor_data(session_key, packet)
         server_engine.last_sensor_capture = {"sid": request.sid, "packet": dict(packet)}
-        process_telemetry(data, "sensor node", packet)
+        process_telemetry(data, "sensor node", packet, device_id=device_id_for(request.sid))
     except Exception as exc:
         log("ERROR", f"[SERVER ERROR] Decryption failed: {exc}")
 
@@ -793,6 +837,54 @@ def handle_relay_actuator_ui(data):
         if reported == "CLOSED":
             server_engine.trip_state = "TRIPPED"
         socketio.emit("update_actuator_ui", {"valve": reported})
+
+
+RIG_VALVE_STATES = ("OPEN", "CLOSED")
+RIG_PUMP_STATES = ("ON", "OFF", None)
+
+
+def _finite_or_none(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+@socketio.on("relay_rig_status")
+def handle_relay_rig_status(data):
+    """The actuator's 1 Hz rig report, re-broadcast to dashboards as rig_status.
+
+    Accepted only from a sid holding an actuator session, and rebuilt field by
+    field rather than forwarded: anything else could otherwise paint the valve
+    OPEN on every operator's screen. device_id is the enrolled identity the
+    server already holds for the sid, not the one in the payload.
+    Unwanted reports are dropped without a log line -- logging them would hand
+    any client a 1 Hz way to flood every dashboard's security log.
+    """
+    if request.sid not in server_engine.actuator_keys or not isinstance(data, dict):
+        return
+    relay = data.get("relay") if isinstance(data.get("relay"), dict) else {}
+    heartbeat = data.get("heartbeat") if isinstance(data.get("heartbeat"), dict) else {}
+    valve = data.get("valve")
+    pump = data.get("pump")
+    socketio.emit("rig_status", {
+        "device_id": device_id_for(request.sid),
+        "valve": valve if valve in RIG_VALVE_STATES else None,
+        "pump": pump if pump in RIG_PUMP_STATES else None,
+        "relay": {
+            "configured": relay.get("configured") is True,
+            "connected": relay.get("connected") is True,
+            "port": _short_str(relay.get("port"), 128),
+        },
+        "heartbeat": {
+            "age_s": _finite_or_none(heartbeat.get("age_s")),
+            "timeout_s": _finite_or_none(heartbeat.get("timeout_s")),
+            "period_s": _finite_or_none(heartbeat.get("period_s")),
+        },
+        "tripped_by_watchdog": data.get("tripped_by_watchdog") is True,
+        "received_at": int(time.time() * 1000),
+    })
 
 
 @socketio.on("mitm_inject")
@@ -835,14 +927,27 @@ def _attack_send_operator(action, value):
     return "refused by the clamp" if server_engine.trip_setpoint == before else "APPLIED"
 
 
-def _attack_impersonate(device_id):
-    """Tests whether an identity can be claimed, WITHOUT taking it.
+def _attack_impersonate():
+    """Runs the real claim rule against an identity that holds a live session.
 
-    Claiming it for real would evict nothing but would leave the attacker's sid
-    holding the identity and lock the genuine device out, so this only reads the
-    current holder. Returns (would_succeed, holder)."""
-    holder = server_engine.active_devices.get(device_id)
-    return holder is None, holder
+    The target is whichever enrolled node is connected right now -- a
+    transmitter if there is one, else the valve node -- because on the physical
+    rig the ESP32 is esp32-01 over HTTP and sensor-01 may not be running at all.
+    Testing a hard-coded identity nobody holds would "succeed" without testing
+    anything. If the claim is ever wrongly accepted it is undone at once, so the
+    demonstration can never lock the genuine device out.
+    Returns (device_id, claimed, holder); device_id is None if nothing is held.
+    """
+    held = sorted(server_engine.active_devices,
+                  key=lambda device: (not device.startswith("sensor"), device))
+    if not held:
+        return None, False, None
+    device_id = held[0]
+    holder = server_engine.active_devices[device_id]
+    claimed, _ = claim_identity(device_id, "attacker-rogue-node")
+    if claimed:
+        server_engine.active_devices[device_id] = holder
+    return device_id, claimed, holder
 
 
 def _attack_capture_and_replay():
@@ -1006,36 +1111,102 @@ def _attack_check_actuator_presence():
     return bool(server_engine.actuator_keys)
 
 
+LIVE_ATTACK_HOOKS = {
+    "sever_heartbeat": _attack_sever_heartbeat,
+    "heartbeat_timeout": HEARTBEAT_TIMEOUT_S,
+    "deliver_bpcs": _attack_deliver_bpcs,
+    "send_operator": _attack_send_operator,
+    "impersonate": _attack_impersonate,
+    "capture_and_replay": _attack_capture_and_replay,
+    "replay_telemetry": _attack_replay_telemetry,
+    "check_stale_session": _attack_check_stale_session,
+    "probe_nonce": _attack_probe_nonce,
+    "send_stale_operator": _attack_send_stale_operator,
+    "attempt_downgrade": _attack_attempt_downgrade,
+    "send_malformed": _attack_send_malformed,
+    "send_oversized": _attack_send_oversized,
+    "send_legacy_events": _attack_send_legacy_events,
+    "check_actuator_presence": _attack_check_actuator_presence,
+}
+
+# campaign_done counts, keyed by the status strings the stages actually report.
+CAMPAIGN_STATUS_KEYS = {
+    "DEFENDED": "defended",
+    "SUCCEEDED": "succeeded",
+    "INCONCLUSIVE": "inconclusive",
+    "NOT APPLICABLE": "not_applicable",
+}
+# Non-blocking acquire is the guard: two trigger_campaign events arriving
+# together cannot both see "not running" the way they could with a bare flag.
+_campaign_lock = threading.Lock()
+
+
+def run_attack_stage(attack_type, index=1, total=1, campaign=False):
+    """One stage, bracketed by attack_progress, with the plant snapshotted as it
+    starts. Returns the status it reported, or None if it reported nothing."""
+    before = plant_snapshot()
+    reported = []
+
+    def report(identifier, status, confidence, evidence, outcome):
+        reported.append(status)
+        report_attack(identifier, status, confidence, evidence, outcome,
+                      physical_before=before)
+
+    progress = {"id": attack_type, "index": index, "total": total, "campaign": campaign}
+    socketio.emit("attack_progress", {**progress, "phase": "start"})
+    try:
+        attacks.run_stage(
+            attack_type, log, socketio.sleep, report,
+            server_side_public_key, deliver_raw_to_actuators,
+            lambda: server_engine.legacy_intercept, LIVE_ATTACK_HOOKS,
+        )
+    except Exception as exc:
+        # One broken stage must not end a campaign or die silently in a thread.
+        log("ERROR", f"[ATTACK] Stage {attack_type} failed to run ({type(exc).__name__}).")
+    finally:
+        socketio.emit("attack_progress", {**progress, "phase": "done"})
+    return reported[-1] if reported else None
+
+
 @socketio.on("trigger_attack")
 def handle_trigger_attack(data):
     """Dashboard attack buttons. Runs in the background so the stage sleeps do
     not block the server's event loop."""
     attack_type = str(data.get("attack_type", ""))
-    live = {
-        "sever_heartbeat": _attack_sever_heartbeat,
-        "heartbeat_timeout": HEARTBEAT_TIMEOUT_S,
-        "deliver_bpcs": _attack_deliver_bpcs,
-        "send_operator": _attack_send_operator,
-        "impersonate": _attack_impersonate,
-        "capture_and_replay": _attack_capture_and_replay,
-        "replay_telemetry": _attack_replay_telemetry,
-        "check_stale_session": _attack_check_stale_session,
-        "probe_nonce": _attack_probe_nonce,
-        "send_stale_operator": _attack_send_stale_operator,
-        "attempt_downgrade": _attack_attempt_downgrade,
-        "send_malformed": _attack_send_malformed,
-        "send_oversized": _attack_send_oversized,
-        "send_legacy_events": _attack_send_legacy_events,
-        "check_actuator_presence": _attack_check_actuator_presence,
-    }
+    socketio.start_background_task(run_attack_stage, attack_type)
 
-    def _run():
-        attacks.run_stage(
-            attack_type, log, socketio.sleep, report_attack,
-            server_side_public_key, deliver_raw_to_actuators,
-            lambda: server_engine.legacy_intercept, live,
-        )
-    socketio.start_background_task(_run)
+
+def run_campaign():
+    """Every stage in ATTACK_ORDER, back to back. Caller holds _campaign_lock."""
+    started = time.time()
+    total = len(attacks.ATTACK_ORDER)
+    counts = dict.fromkeys(CAMPAIGN_STATUS_KEYS.values(), 0)
+    counts["no_result"] = 0
+    try:
+        for index, name in enumerate(attacks.ATTACK_ORDER, start=1):
+            status = run_attack_stage(name, index, total, campaign=True)
+            counts[CAMPAIGN_STATUS_KEYS.get(status, "no_result")] += 1
+            socketio.sleep(1)  # the same gap attacks.run_all leaves between stages
+    finally:
+        _campaign_lock.release()
+    socketio.emit("campaign_done", {
+        "total": total, **counts, "duration_s": round(time.time() - started, 1),
+    })
+
+
+@socketio.on("trigger_campaign")
+def handle_trigger_campaign(data=None):
+    """Runs the whole attack catalogue once. One campaign at a time: two
+    interleaved runs would fight over the same heartbeat and trip latch, and
+    every before/after snapshot would be meaningless."""
+    if not _campaign_lock.acquire(blocking=False):
+        log("ALERT", "[ATTACK] Campaign already running. Second request refused.")
+        return
+    try:
+        socketio.start_background_task(run_campaign)
+    except Exception:
+        _campaign_lock.release()
+        raise
 
 
 @socketio.on("manual_trip")

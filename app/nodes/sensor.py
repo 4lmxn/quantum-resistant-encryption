@@ -73,6 +73,7 @@ class SimulatedSensorNode:
         telemetry = {
             "temperature": round(self.temperature, 2),
             "humidity": round(random.uniform(40.0, 65.0), 2),
+            "sensor": "simulated",
         }
         aesgcm = AESGCM(bytes(self.key_a))
         nonce = os.urandom(12)  # 96-bit nonce

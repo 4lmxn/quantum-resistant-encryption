@@ -73,10 +73,6 @@ static const int RED_LED_PIN = 27;
 // The MAX6675 converts in ~220 ms; one reading a second is real time for a
 // thermal process and keeps the HTTP leg comfortably under its round trip.
 static const uint32_t SAMPLE_PERIOD_MS = 1000;
-// A thermocouple measures temperature only. The telemetry schema carries a
-// humidity field because the Python sensor has one; this is a fixed nominal
-// value, not a measurement, and nothing downstream acts on it.
-static const float NOMINAL_HUMIDITY = 45.0f;
 #else
 // The DHT22 cannot sample faster than once every 2 s.
 static const uint32_t SAMPLE_PERIOD_MS = 2000;
@@ -247,9 +243,19 @@ static bool runHandshake() {
 
 /* Returns the server's reply on acceptance, or "" if the post failed. */
 static String sealAndPost(float temp, float hum) {
+  // Under ct[] below (192), so a full buffer still encrypts in place.
   char plain[160];
+#if TT101_MAX6675
+  // A thermocouple measures temperature only, so there is no humidity key at
+  // all -- the server shows "not measured" rather than a made-up number.
+  (void)hum;
   snprintf(plain, sizeof(plain),
-           "{\"unit\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f}", DEVICE_ID, temp, hum);
+           "{\"unit\":\"%s\",\"sensor\":\"MAX6675\",\"temperature\":%.2f}", DEVICE_ID, temp);
+#else
+  snprintf(plain, sizeof(plain),
+           "{\"unit\":\"%s\",\"sensor\":\"DHT22\",\"temperature\":%.2f,\"humidity\":%.2f}",
+           DEVICE_ID, temp, hum);
+#endif
   size_t len = strlen(plain);
   uint8_t nonce[12], ct[192], tag[16];
   for (int i = 0; i < 12; i += 4) { uint32_t r = esp_random(); memcpy(nonce + i, &r, 4); }
@@ -339,7 +345,7 @@ static float readProcessTemperature(float *humidity) {
                                           : "SPI fault -- check GPIO 18/19/5");
     return NAN;
   }
-  *humidity = NOMINAL_HUMIDITY;
+  *humidity = NAN;  // not measured; sealAndPost omits the key in this mode
   return thermocouple.getCelsius();
 #else
   TempAndHumidity reading = dht.getTempAndHumidity();

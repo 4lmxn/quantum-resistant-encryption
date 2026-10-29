@@ -19,13 +19,18 @@ from app.pqc import ENCAPSULATION_KEY_BYTES, LINK_SENSOR, encapsulate
 
 
 # Structured description of each attack, so the interface can present the name,
-# severity and mitigation without inferring anything from log text.
+# severity and mitigation without inferring anything from log text. `link` is
+# the part of the pipeline the stage actually hits (sensor_link, actuator_link,
+# operator, key_exchange, server); `stopped_by` names, in a few words, the
+# control in this codebase that defeats it -- or says plainly that none does.
 ATTACK_CATALOG = {
     "silence": {
         "name": "Silence the Safety Function",
         "family": "Operational sabotage",
         "severity": "CRITICAL",
         "target": "The trip path itself",
+        "link": "actuator_link",
+        "stopped_by": "heartbeat watchdog",
         "vector": "The attacker does not forge anything. They cut the link the safety "
                   "controller uses to reach the shutdown valve, so that when a real "
                   "excursion arrives there is nothing left to act on it. This is what "
@@ -43,6 +48,8 @@ ATTACK_CATALOG = {
         "family": "Credential compromise",
         "severity": "HIGH",
         "target": "The constrained monitoring node",
+        "link": "sensor_link",
+        "stopped_by": "lane split",
         "vector": "One device is too small to run the handshake, so it carries a fixed "
                   "provisioning key rather than a per-session one. Suppose the attacker "
                   "obtains it -- from a stolen board, a dumped flash image, a careless "
@@ -60,6 +67,8 @@ ATTACK_CATALOG = {
         "family": "Abuse of legitimate access",
         "severity": "CRITICAL",
         "target": "The trip setpoint",
+        "link": "operator",
+        "stopped_by": "setpoint clamp",
         "vector": "No cipher is broken. The attacker uses a real control path — either "
                   "the dashboard, or a genuine operator key — and simply asks for a trip "
                   "point that makes the safety function useless. At Oldsmar in 2021 "
@@ -77,6 +86,8 @@ ATTACK_CATALOG = {
         "family": "Impersonation",
         "severity": "HIGH",
         "target": "Device enrolment",
+        "link": "key_exchange",
+        "stopped_by": "duplicate-session check",
         "vector": "The attacker connects a second node claiming to be an already "
                   "connected transmitter. If both are served, their readings interleave "
                   "and the plant appears to be two different temperatures at once — a "
@@ -93,6 +104,8 @@ ATTACK_CATALOG = {
         "family": "Active tampering",
         "severity": "HIGH",
         "target": "Actuator command channel",
+        "link": "actuator_link",
+        "stopped_by": "nonce check",
         "vector": "The attacker records a genuine sealed command off the wire and sends "
                   "it again later. Nothing is forged and nothing is decrypted — the "
                   "packet is real, so its authentication tag is perfect. The FDA "
@@ -110,6 +123,8 @@ ATTACK_CATALOG = {
         "family": "Quantum cryptanalysis",
         "severity": "CRITICAL",
         "target": "Key exchange — both channels",
+        "link": "key_exchange",
+        "stopped_by": "ML-KEM-768",
         "vector": "Today's internet keys are built from two large prime numbers "
                   "multiplied together. Security rests on nobody being able to work "
                   "backwards and find those primes. A quantum computer running Shor's "
@@ -126,6 +141,8 @@ ATTACK_CATALOG = {
         "family": "Quantum cryptanalysis",
         "severity": "CRITICAL",
         "target": "ML-KEM-768 key encapsulation",
+        "link": "key_exchange",
+        "stopped_by": "Module-LWE hardness",
         "vector": "The best known attack on ML-KEM. It treats the public key as a grid "
                   "of points and tries to shorten the grid until the hidden secret is "
                   "exposed. This is what BKZ reduction does to the Module-LWE problem.",
@@ -140,6 +157,8 @@ ATTACK_CATALOG = {
         "family": "Passive interception",
         "severity": "HIGH",
         "target": "Recorded ciphertext, both channels",
+        "link": "key_exchange",
+        "stopped_by": "per-connection keys",
         "vector": "The attacker does not try to break anything today. They simply record "
                   "the encrypted traffic and store it, waiting for a quantum computer "
                   "capable of opening it later.",
@@ -155,6 +174,8 @@ ATTACK_CATALOG = {
         "family": "Active tampering",
         "severity": "CRITICAL",
         "target": "Actuator command channel",
+        "link": "actuator_link",
+        "stopped_by": "AES-GCM tag",
         "vector": "The attacker sits on the network and sends the actuator a command the "
                   "server never issued, hoping it will simply obey.",
         "impact": "Physical hardware operated by an outsider. On a real installation that "
@@ -168,6 +189,8 @@ ATTACK_CATALOG = {
         "family": "Active tampering",
         "severity": "MEDIUM",
         "target": "Sensor telemetry channel",
+        "link": "sensor_link",
+        "stopped_by": "nonce check",
         "vector": "The attacker records a genuine sealed telemetry packet off the "
                   "sensor link and sends the identical bytes again. This is the same "
                   "class of attack as replaying a captured command, demonstrated "
@@ -184,6 +207,8 @@ ATTACK_CATALOG = {
         "family": "Active tampering",
         "severity": "MEDIUM",
         "target": "Sensor session lifecycle",
+        "link": "sensor_link",
+        "stopped_by": "key erased on disconnect",
         "vector": "The attacker captured a genuine packet earlier, but the session "
                   "it belonged to has since disconnected -- the sensor node "
                   "restarted, or its connection dropped. The attacker replays the "
@@ -200,6 +225,8 @@ ATTACK_CATALOG = {
         "family": "Active tampering",
         "severity": "LOW",
         "target": "Freshness enforcement",
+        "link": "sensor_link",
+        "stopped_by": "nonce check",
         "vector": "The attacker has captured nothing and holds no key. They simply "
                   "try a nonce value once -- succeeding or failing does not matter "
                   "-- and then try the exact same nonce value again, to see whether "
@@ -217,6 +244,8 @@ ATTACK_CATALOG = {
         "family": "Active tampering",
         "severity": "MEDIUM",
         "target": "Operator command freshness",
+        "link": "operator",
+        "stopped_by": "timestamp check",
         "vector": "A correctly signed operator command, built with a timestamp far "
                   "in the past -- as if it had been captured during commissioning "
                   "and held back for delivery during an upset.",
@@ -232,6 +261,8 @@ ATTACK_CATALOG = {
         "family": "Impersonation",
         "severity": "MEDIUM",
         "target": "Constrained-node trust level",
+        "link": "sensor_link",
+        "stopped_by": "AES-GCM tag",
         "vector": "A device that already completed the authenticated ML-KEM/ML-DSA "
                   "handshake has its telemetry re-sealed with the constrained "
                   "node's static provisioning key instead, hoping the server will "
@@ -250,6 +281,8 @@ ATTACK_CATALOG = {
         "family": "Robustness",
         "severity": "LOW",
         "target": "Packet parsing, both directions",
+        "link": "server",
+        "stopped_by": "fail-closed parsing",
         "vector": "Packets missing required fields, or carrying non-hex garbage "
                   "where a nonce or ciphertext is expected, sent to both the sensor "
                   "telemetry handler and the actuator command channel.",
@@ -264,6 +297,8 @@ ATTACK_CATALOG = {
         "family": "Robustness",
         "severity": "LOW",
         "target": "Packet parsing, resource use",
+        "link": "server",
+        "stopped_by": "size limit",
         "vector": "A telemetry packet with a multi-megabyte ciphertext field -- far "
                   "larger than any genuine reading -- to see whether size alone "
                   "causes different behaviour than an ordinary forged packet.",
@@ -280,6 +315,8 @@ ATTACK_CATALOG = {
         "family": "Abuse of legitimate access",
         "severity": "LOW",
         "target": "Safety state, unsigned path",
+        "link": "operator",
+        "stopped_by": "no unsigned handler",
         "vector": "The legacy unsigned control events this dashboard used to expose "
                   "-- set_threshold, toggle_actuator_override, resume_automatic -- "
                   "are sent again, as if an old client or a stale bookmark tried to "
@@ -296,6 +333,8 @@ ATTACK_CATALOG = {
         "family": "Operational sabotage",
         "severity": "HIGH",
         "target": "Physical fail-safe coverage",
+        "link": "actuator_link",
+        "stopped_by": "nothing (known gap)",
         "vector": "Not a forgery: simply the case where no actuator node is "
                   "currently connected to the server at all -- crashed, never "
                   "started, or its process killed outright rather than merely "
@@ -315,6 +354,8 @@ ATTACK_CATALOG = {
         "family": "Operational sabotage",
         "severity": "INFO",
         "target": "Server availability",
+        "link": "server",
+        "stopped_by": "heartbeat watchdog",
         "vector": "The server process itself is stopped or unreachable -- the "
                   "complete version of 'silence the safety function', rather than "
                   "just withholding its heartbeats.",
@@ -328,6 +369,8 @@ ATTACK_CATALOG = {
         "family": "Quantum cryptanalysis",
         "severity": "MEDIUM",
         "target": "AES session keys, both channels",
+        "link": "key_exchange",
+        "stopped_by": "256-bit AES keys",
         "vector": "Rather than breaking the maths, this simply searches for the key — but "
                   "a quantum computer searches far faster, effectively halving the key "
                   "length.",
@@ -638,23 +681,33 @@ def stage_insider(log, sleep, report, send_operator):
 def stage_rogue(log, sleep, report, impersonate):
     """Real: a second node claims an identity that already holds a session.
 
-    impersonate(device_id) attempts to claim an in-use identity through the same
-    function the handshake uses, so the demonstration cannot drift from the rule.
+    impersonate() picks an identity that holds a live session and attempts to
+    claim it through the same function the handshake uses, so the demonstration
+    cannot drift from the rule. With nothing connected there is no identity to
+    steal, and the stage says so rather than scoring an untested claim.
     """
-    log("ATTACK", "Rogue Node: connecting a second transmitter claiming to be sensor-01")
+    log("ATTACK", "Rogue Node: connecting a second node claiming a connected identity")
     sleep(1)
-    claimed, holder = impersonate("sensor-01")
+    device_id, claimed, holder = impersonate()
     sleep(1)
+    if device_id is None:
+        report("rogue", status="INCONCLUSIVE", confidence="Not applicable yet",
+               evidence="No enrolled node held a session, so there was no identity to "
+                        "impersonate.",
+               outcome="Connect the valve node or a transmitter and run it again.")
+        return
     report(
         "rogue",
         status="DEFENDED" if not claimed else "SUCCEEDED",
         confidence="Observed",
-        evidence=f"A second session tried to claim sensor-01, which was already held by "
-                 f"session {holder[:8] if holder else '—'}. The claim was "
+        evidence=f"A second session tried to claim {device_id}, which was already held by "
+                 f"session {holder[:8]}. The claim was "
                  f"{'refused' if not claimed else 'ACCEPTED'}.",
-        outcome="One identity, one session. The impostor was turned away and the real "
-                "transmitter kept streaming, so the plant never appeared to be two "
-                "temperatures at once.",
+        outcome=("One identity, one session. The impostor was turned away and the real "
+                 f"{device_id} kept its session, so the plant never heard two voices "
+                 "claiming the same name.") if not claimed else
+                (f"The rule failed: a second session was allowed to claim {device_id}. "
+                 "The claim was rolled back immediately."),
     )
 
 

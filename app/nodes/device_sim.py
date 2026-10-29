@@ -79,7 +79,7 @@ def handshake():
 
 def seal_reading(session_key, temperature, humidity):
     """12-byte nonce, ciphertext||tag — the layout the firmware reproduces."""
-    payload = (f'{{"unit": "{DEVICE_ID}", "temperature": {temperature:.2f}, '
+    payload = (f'{{"unit": "{DEVICE_ID}", "sensor": "simulated", "temperature": {temperature:.2f}, '
                f'"humidity": {humidity:.2f}}}')
     nonce = os.urandom(12)
     sealed = AESGCM(session_key).encrypt(nonce, payload.encode(), None)

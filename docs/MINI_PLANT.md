@@ -212,6 +212,59 @@ the table at each beat.
 Before the bypass beat, run `make operator ARGS="bypass off"` and `reset` if
 the latch is set, so each beat starts from HEALTHY.
 
+## Attacking from a second laptop
+
+Running `make attack` on the Mac that hosts the server proves the logic, but
+the attacker is the same machine as the plant. For the demo, put the attacker
+on its own laptop on the same WiFi. It then reaches the plant only the way a
+real intruder would: over the network, holding none of the plant's keys.
+
+On the Mac (the plant):
+
+```bash
+ipconfig getifaddr en0          # e.g. 192.168.1.7 -- the address the attacker targets
+make server                     # already binds 0.0.0.0, so it accepts LAN traffic
+```
+
+Allow incoming connections for Python when macOS asks, or under System
+Settings → Network → Firewall.
+
+On the attacker laptop, which needs only a clone of the repo:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+SIS_SERVER_URL=http://192.168.1.7:5001 make attack
+```
+
+Do **not** copy `identities.json`, `identities/` or `keys.h` to this laptop.
+It is the attacker, and it has none of the plant's secrets. It generates its
+own unrelated provisioning key on first run, which the plant will not accept.
+
+What the room sees: the attack log scrolling on the attacker laptop, every
+stage landing red on the plant's dashboard, and the water still flowing.
+
+### Showing what an eavesdropper captures
+
+On a WPA2/WPA3 network a second laptop cannot see other devices' traffic
+without monitor mode. Capture on the plant Mac instead, which sees every packet
+the ESP32 and the attacker send it:
+
+```bash
+sudo tcpdump -i en0 -A 'tcp port 5001'
+```
+
+Or in Wireshark, capture on `en0` with the display filter
+`tcp.port == 5001 && http.request.method == "POST"`, and open one of the
+ESP32's `/telemetry` posts. The body is the JSON envelope
+`{"device_id": ..., "nonce": ..., "ciphertext": ...}`, where the reading itself
+is opaque hex. The temperature appears nowhere on the wire, and the dashboard's
+"What an eavesdropper sees" tab shows the same ciphertext beside the decrypted
+value. The ML-KEM handshake is visible too (`/pqc/hello` carries the 1184-byte
+encapsulation key), and capturing it recovers nothing: that is attack stage 2.
+
+The transport is plain HTTP on purpose, so the capture shows the application
+layer's own protection. TLS would hide everything and prove less.
+
 ## Safety
 
 - 12 V DC only. No mains anywhere near the water.

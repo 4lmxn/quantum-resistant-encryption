@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app import identity
 from app.config import (
+    HEARTBEAT_PERIOD_S,
     HEARTBEAT_TIMEOUT_S,
     SERVER_URL,
     TOPIC_COMMAND,
@@ -234,19 +235,46 @@ def watchdog_loop():
         # XV-101 if this stops arriving, so a crashed actuator, a dropped
         # session or a pulled USB cable all fail the physical valve shut.
         relay_driver.send_valve_state(actuator.valve_state)
-        if actuator.key_b is None or actuator.tripped_by_watchdog:
-            continue
-        if not actuator.heartbeat_overdue():
-            continue
-        actuator.tripped_by_watchdog = True
-        actuator._set_valve("CLOSED")
-        print(f"[ACTUATOR] Heartbeat lost for >{HEARTBEAT_TIMEOUT_S}s. TRIPPING XV-101.")
-        sio.emit("relay_log", {
-            "type": "ALERT",
-            "msg": f"[ACTUATOR] Dead-man watchdog: no authenticated heartbeat for "
-                   f"{HEARTBEAT_TIMEOUT_S}s. XV-101 CLOSED locally.",
-        })
-        sio.emit("relay_actuator_ui", {"valve": actuator.valve_state})
+        if (actuator.key_b is not None and not actuator.tripped_by_watchdog
+                and actuator.heartbeat_overdue()):
+            actuator.tripped_by_watchdog = True
+            actuator._set_valve("CLOSED")
+            print(f"[ACTUATOR] Heartbeat lost for >{HEARTBEAT_TIMEOUT_S}s. TRIPPING XV-101.")
+            sio.emit("relay_log", {
+                "type": "ALERT",
+                "msg": f"[ACTUATOR] Dead-man watchdog: no authenticated heartbeat for "
+                       f"{HEARTBEAT_TIMEOUT_S}s. XV-101 CLOSED locally.",
+            })
+            sio.emit("relay_actuator_ui", {"valve": actuator.valve_state})
+        # After the trip check, so a pass that just tripped reports it.
+        sio.emit("relay_rig_status", rig_status())
+
+
+def rig_status():
+    """The physical rig as this node sees it, for the dashboard's rig panel.
+
+    The pump shares the Nano relay with the valve (nano_relay.ino), so it runs
+    only while that link is up and holding the valve open. Without a relay
+    board configured there is no pump to speak of, hence None.
+    """
+    relay = relay_driver.status()
+    if not relay["configured"]:
+        pump = None
+    else:
+        pump = "ON" if relay["connected"] and actuator.valve_state == "OPEN" else "OFF"
+    # Monotonic, like last_heartbeat. Seeded at pqc_established, so this is the
+    # watchdog's own clock: the age it compares against the timeout.
+    age = (None if actuator.last_heartbeat is None
+           else round(time.monotonic() - actuator.last_heartbeat, 2))
+    return {
+        "device_id": DEVICE_ID,
+        "valve": actuator.valve_state,
+        "pump": pump,
+        "relay": relay,
+        "heartbeat": {"age_s": age, "timeout_s": HEARTBEAT_TIMEOUT_S,
+                      "period_s": HEARTBEAT_PERIOD_S},
+        "tripped_by_watchdog": actuator.tripped_by_watchdog,
+    }
 
 
 @sio.on("execute_actuator_command")
