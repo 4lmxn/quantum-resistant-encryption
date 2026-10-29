@@ -8,7 +8,20 @@
  * server's kyber-py / dilithium-py by `make pqc-interop`.
  *
  * Provision first:  make enroll  &&  make firmware-keys   (writes keys.h)
- * Then set WIFI_* and TELEMETRY_HOST below.
+ * Then set WIFI_* and SERVER below.
+ *
+ * This board is TT-101 on the mini plant (docs/MINI_PLANT.md). Its reading is
+ * a real safety-lane input: at or above the setpoint the server latches a trip
+ * and the actuator closes XV-101. Sensor, chosen by TT101_SENSOR below:
+ *   MAX6675 + K-type probe: SCK 18, SO 19, CS 5 (the real design)
+ *   DHT22 fallback:         data on GPIO 15 (max 80 C -- the setpoint ceiling)
+ *
+ * Three lamps mirror what the server reports (each LED via 220R to GND):
+ *   GREEN  GPIO 25 = HEALTHY, confirmed by the server on the last reading
+ *   RED    GPIO 27 = TRIPPED, latched until a signed operator RESET
+ *   YELLOW GPIO 26 = fault: no session, server unreachable, or sensor failed.
+ *                    Green goes dark with it -- the board will not vouch for a
+ *                    plant state it could not confirm.
  *
  * ML-DSA-65 signing needs ~45 KB of stack, so the handshake runs in a dedicated
  * FreeRTOS task with a 64 KB stack, not the 8 KB Arduino loop task.
@@ -19,6 +32,15 @@
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 
+// Which transmitter TT-101 is. 1 = MAX6675 K-type thermocouple, 0 = DHT22.
+#define TT101_MAX6675 1
+
+#if TT101_MAX6675
+#include "MAX6675.h"
+#else
+#include "DHTesp.h"
+#endif
+
 extern "C" {
   #include "api.h"      // ML-KEM-768
   #include "d_api.h"    // ML-DSA-65
@@ -26,16 +48,42 @@ extern "C" {
 }
 #include "keys.h"       // DEVICE_ID, DEVICE_SECRET, SERVER_PUBLIC  (generated, gitignored)
 
-static const char *WIFI_SSID = "Wokwi-GUEST";
-static const char *WIFI_PASS = "";
-// Server base URL, no trailing slash. Use http on the LAN / paid Wokwi gateway.
-static const char *SERVER = "http://host.wokwi.internal:5001";
+// Real hardware: the ESP32 must join the SAME network as the machine running
+// `make server`. 2.4 GHz only -- the ESP32 has no 5 GHz radio.
+static const char *WIFI_SSID = "YOUR_WIFI_SSID";
+static const char *WIFI_PASS = "YOUR_WIFI_PASSWORD";
+// Server base URL, no trailing slash: http://<server LAN IP>:5001.
+// On macOS: `ipconfig getifaddr en0`.
+static const char *SERVER = "http://172.20.10.2:5001";
 
 static const char *ROLE = "sensor";
 static const char *LINK_LABEL = "quantum-iot/sensor-link/aes256gcm";
 static const char *TRANSCRIPT_PREFIX = "quantum-iot/v1|sensor|";
 
+static const int TC_SCK_PIN = 18;
+static const int TC_SO_PIN = 19;
+static const int TC_CS_PIN = 5;
 static const int DHT_PIN = 15;
+
+static const int GREEN_LED_PIN = 25;
+static const int YELLOW_LED_PIN = 26;
+static const int RED_LED_PIN = 27;
+
+#if TT101_MAX6675
+// The MAX6675 converts in ~220 ms; one reading a second is real time for a
+// thermal process and keeps the HTTP leg comfortably under its round trip.
+static const uint32_t SAMPLE_PERIOD_MS = 1000;
+// A thermocouple measures temperature only. The telemetry schema carries a
+// humidity field because the Python sensor has one; this is a fixed nominal
+// value, not a measurement, and nothing downstream acts on it.
+static const float NOMINAL_HUMIDITY = 45.0f;
+#else
+// The DHT22 cannot sample faster than once every 2 s.
+static const uint32_t SAMPLE_PERIOD_MS = 2000;
+#endif
+// Consecutive rejected/failed posts before the session is assumed dead (e.g.
+// the server restarted and forgot it) and a fresh handshake is run.
+static const int MAX_POST_FAILURES = 3;
 
 // Sizes from the vendored PQClean headers.
 #define EK_BYTES  PQCLEAN_MLKEM768_CLEAN_CRYPTO_PUBLICKEYBYTES   // 1184
@@ -44,6 +92,13 @@ static const int DHT_PIN = 15;
 
 static uint8_t g_session_key[32];
 static volatile bool g_have_key = false;
+static volatile bool g_handshaking = false;
+#if TT101_MAX6675
+// RobTillaart's constructor is (select, miso, clock) -- not Adafruit's order.
+static MAX6675 thermocouple(TC_CS_PIN, TC_SO_PIN, TC_SCK_PIN);
+#else
+static DHTesp dht;
+#endif
 
 // ---------------------------------------------------------------- helpers ---
 
@@ -190,7 +245,8 @@ static bool runHandshake() {
 
 // ---------------------------------------------------------------- telemetry -
 
-static bool sealAndPost(float temp, float hum) {
+/* Returns the server's reply on acceptance, or "" if the post failed. */
+static String sealAndPost(float temp, float hum) {
   char plain[160];
   snprintf(plain, sizeof(plain),
            "{\"unit\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f}", DEVICE_ID, temp, hum);
@@ -203,7 +259,7 @@ static bool sealAndPost(float temp, float hum) {
   int rc = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT, len, nonce, 12, NULL, 0,
                                      (const uint8_t *)plain, ct, 16, tag);
   mbedtls_gcm_free(&gcm);
-  if (rc != 0) return false;
+  if (rc != 0) return String("");
   memcpy(ct + len, tag, 16);
 
   char nHex[25], cHex[192 * 2 + 1];
@@ -212,7 +268,7 @@ static bool sealAndPost(float temp, float hum) {
   String body = String("{\"device_id\":\"") + DEVICE_ID + "\",\"nonce\":\"" + nHex +
                 "\",\"ciphertext\":\"" + cHex + "\"}";
   String r = postJson("/telemetry", body);
-  return r.indexOf("accepted") >= 0;
+  return r.indexOf("accepted") >= 0 ? r : String("");
 }
 
 // ---------------------------------------------------------------- tasks -----
@@ -222,7 +278,16 @@ static void handshakeTask(void *) {
     Serial.println("[PQC] Handshake failed; retrying in 3s.");
     vTaskDelay(pdMS_TO_TICKS(3000));
   }
+  g_handshaking = false;
   vTaskDelete(NULL);  // done; loop() takes over telemetry
+}
+
+static void startHandshake() {
+  if (g_handshaking) return;
+  g_have_key = false;
+  g_handshaking = true;
+  // 64 KB stack: ML-DSA-65 signing needs ~45 KB, far past the 8 KB loop task.
+  xTaskCreatePinnedToCore(handshakeTask, "pqc-handshake", 64 * 1024, NULL, 1, NULL, 1);
 }
 
 void setup() {
@@ -230,20 +295,97 @@ void setup() {
   delay(600);
   Serial.printf("\n[BOOT] %s — full post-quantum handshake node\n", DEVICE_ID);
 
-  WiFi.begin(WIFI_SSID, WIFI_PASS, 6);
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(YELLOW_LED_PIN, OUTPUT);
+  pinMode(RED_LED_PIN, OUTPUT);
+  digitalWrite(YELLOW_LED_PIN, HIGH);  // fault until the server confirms otherwise
+#if TT101_MAX6675
+  thermocouple.begin();
+  delay(500);  // MAX6675 needs ~200 ms after power-up before its first conversion
+#else
+  dht.setup(DHT_PIN, DHTesp::DHT22);
+#endif
+
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("[NET] WiFi");
   while (WiFi.status() != WL_CONNECTED) { delay(200); Serial.print("."); }
   Serial.printf(" up as %s\n", WiFi.localIP().toString().c_str());
 
-  // 64 KB stack: ML-DSA-65 signing needs ~45 KB, far past the 8 KB loop task.
-  xTaskCreatePinnedToCore(handshakeTask, "pqc-handshake", 64 * 1024, NULL, 1, NULL, 1);
+  startHandshake();
+}
+
+// Unknown plant state: yellow on, green off. Red keeps its last confirmed
+// value -- a latched trip does not clear because the link dropped.
+static void showFault() {
+  digitalWrite(YELLOW_LED_PIN, HIGH);
+  digitalWrite(GREEN_LED_PIN, LOW);
+}
+
+static void showPlantState(bool tripped) {
+  digitalWrite(YELLOW_LED_PIN, LOW);
+  digitalWrite(GREEN_LED_PIN, tripped ? LOW : HIGH);
+  digitalWrite(RED_LED_PIN, tripped ? HIGH : LOW);
+}
+
+/* Process temperature in C, or NAN if the sensor could not be read. A burnt-out
+   probe must never be published as a plausible number: on the safety lane a
+   confident wrong reading is worse than an obvious absence. */
+static float readProcessTemperature(float *humidity) {
+#if TT101_MAX6675
+  uint8_t status = thermocouple.read();
+  if (status != STATUS_OK) {
+    Serial.printf("[SENSOR] MAX6675 status 0x%02X (%s)\n", status,
+                  status == STATUS_NOREAD ? "open thermocouple / no probe"
+                                          : "SPI fault -- check GPIO 18/19/5");
+    return NAN;
+  }
+  *humidity = NOMINAL_HUMIDITY;
+  return thermocouple.getCelsius();
+#else
+  TempAndHumidity reading = dht.getTempAndHumidity();
+  if (dht.getStatus() != DHTesp::ERROR_NONE) {
+    Serial.printf("[SENSOR] DHT22 read failed: %s (check wiring on GPIO %d)\n",
+                  dht.getStatusString(), DHT_PIN);
+    return NAN;
+  }
+  *humidity = reading.humidity;
+  return reading.temperature;
+#endif
 }
 
 void loop() {
-  if (!g_have_key) { delay(200); return; }
-  // Replace with a real DHT22 read; a plausible process value keeps the demo live.
-  float temp = 66.0f + (float)(esp_random() % 400) / 100.0f;
-  if (sealAndPost(temp, 45.0f))
-    Serial.printf("[TX] %.2fC sealed with the session key -> accepted\n", temp);
-  delay(4000);
+  static uint32_t lastSample = 0;
+  static int failures = 0;
+
+  if (!g_have_key) { showFault(); delay(50); return; }
+  if (millis() - lastSample < SAMPLE_PERIOD_MS) { delay(20); return; }
+  lastSample = millis();
+
+  float humidity = 0.0f;
+  float temperature = readProcessTemperature(&humidity);
+  if (isnan(temperature)) {
+    // Never publish a made-up number. The server sees silence, not a false value.
+    showFault();
+    return;
+  }
+
+  String reply = sealAndPost(temperature, humidity);
+  if (reply.length() == 0) {
+    showFault();
+    Serial.printf("[TX] %.2fC NOT accepted (%d/%d)\n", temperature,
+                  ++failures, MAX_POST_FAILURES);
+    if (failures >= MAX_POST_FAILURES) {
+      Serial.println("[PQC] Session presumed lost; re-running the handshake.");
+      failures = 0;
+      startHandshake();
+    }
+    return;
+  }
+  failures = 0;
+
+  // The server owns the trip decision; the lamps only mirror it.
+  bool tripped = reply.indexOf("TRIPPED") >= 0;
+  showPlantState(tripped);
+  Serial.printf("[TX] %.2fC sealed -> accepted, plant %s\n",
+                temperature, tripped ? "TRIPPED" : "HEALTHY");
 }

@@ -15,6 +15,10 @@ pip install -r requirements.txt
 make enroll          # creates the ML-DSA identities, including operator-01
 ```
 
+Running it on the physical rig (water, valve, pump, ESP32 transmitter)? Build
+and wiring are in `docs/MINI_PLANT.md`, along with what each beat does on the
+table.
+
 ## Terminals
 
 | | Command | What it is |

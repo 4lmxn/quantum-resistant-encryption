@@ -12,6 +12,7 @@ never stop the demo running purely in software -- every failure here is
 swallowed and logged, same as _persist_finding in app/server.py.
 """
 import os
+import time
 
 _PORT = os.environ.get("RELAY_SERIAL_PORT")
 _BAUD = int(os.environ.get("RELAY_SERIAL_BAUD", "9600"))
@@ -25,6 +26,11 @@ def _connect():
     try:
         import serial
         _conn = serial.Serial(_PORT, _BAUD, timeout=1)
+        # Opening the port pulses DTR, which resets an Uno/Nano into its
+        # bootloader for ~1.5 s; bytes sent before it boots are lost, so the
+        # startup sync would never arrive. First open happens in
+        # run_actuator_node() before sio.connect, so blocking here is safe.
+        time.sleep(2)
         print(f"[RELAY] Connected to Nano on {_PORT} @ {_BAUD}.")
     except Exception as exc:
         print(f"[RELAY] Could not open {_PORT}: {exc}. Running without physical relay.")

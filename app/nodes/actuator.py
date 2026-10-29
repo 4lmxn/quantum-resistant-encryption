@@ -230,6 +230,10 @@ def watchdog_loop():
     """
     while sio.connected:
         sio.sleep(1.0)
+        # Keepalive for the Nano's own link watchdog (nano_relay.ino): it closes
+        # XV-101 if this stops arriving, so a crashed actuator, a dropped
+        # session or a pulled USB cable all fail the physical valve shut.
+        relay_driver.send_valve_state(actuator.valve_state)
         if actuator.key_b is None or actuator.tripped_by_watchdog:
             continue
         if not actuator.heartbeat_overdue():
