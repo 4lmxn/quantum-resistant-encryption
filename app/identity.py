@@ -20,6 +20,7 @@ post-quantum handshake would reintroduce exactly the weakness ML-KEM removes.
 import json
 import os
 import pathlib
+import threading
 
 from dilithium_py.ml_dsa import ML_DSA_65
 
@@ -31,20 +32,35 @@ SIGNATURE_BYTES = 3309
 
 REGISTRY_PATH = PROJECT_ROOT / "identities.json"
 
+# dilithium-py, without the optional xoflib, hashes through module-global SHAKE
+# objects (dilithium_py/shake/shake_wrapper.py: `shake256 = Shake(...)`) whose
+# absorb() overwrites one shared buffer and read index. The server runs
+# Flask-SocketIO in threading mode, so two handshakes arriving together signed
+# through the same XOF stream and both came out invalid -- nodes aborting with
+# "server signature invalid". A concurrent verify is corrupted the same way and
+# would refuse a genuine node. Every ML-DSA call goes through here, so one lock
+# serialises them; it covers the HSM path too, since the HSM only supplies the
+# key bytes and signing still happens in software.
+# ponytail: global lock, ~30 ms per signature serialised; drop it if xoflib is installed.
+_ML_DSA_LOCK = threading.Lock()
+
 
 def generate_identity():
     """Returns (public_key, secret_key) for one device or server."""
-    return ML_DSA_65.keygen()
+    with _ML_DSA_LOCK:
+        return ML_DSA_65.keygen()
 
 
 def sign(secret_key, message):
-    return ML_DSA_65.sign(secret_key, message)
+    with _ML_DSA_LOCK:
+        return ML_DSA_65.sign(secret_key, message)
 
 
 def verify(public_key, message, signature):
     """False on any failure, so a malformed signature is a rejection, not a crash."""
     try:
-        return ML_DSA_65.verify(public_key, message, signature)
+        with _ML_DSA_LOCK:
+            return ML_DSA_65.verify(public_key, message, signature)
     except Exception:
         return False
 
