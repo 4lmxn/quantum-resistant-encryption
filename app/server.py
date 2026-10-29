@@ -109,7 +109,7 @@ class CentralServer:
         # and ML-DSA-65 as the Socket.IO nodes, carried over three POSTs because
         # a microcontroller speaks HTTP, not a websocket. Keyed by device_id: a
         # constrained node is one physical box with one enrolled identity.
-        self.http_pending = {}   # handshake_id -> (role, dk, ek, device_id)
+        self.http_pending = {}   # handshake_id -> (role, dk, ek, device_id, issued_at)
         self.http_sessions = {}  # device_id -> session_key
         # A fresh 4-digit operator PIN each server run, revealed only in the
         # console. The dashboard is a view; this gates it to whoever has console
@@ -540,6 +540,22 @@ def index():
     return render_template("index.html")
 
 
+# /pqc/hello is unauthenticated by design -- the device has not proved anything
+# yet -- so every caller leaves a decapsulation key behind. Unbounded, any host
+# on the network could grow the safety controller's memory without limit. A
+# real device answers within seconds; anything older is abandoned.
+HTTP_HANDSHAKE_TTL_S = 30.0
+HTTP_PENDING_MAX = 64
+
+
+def _prune_http_pending(now):
+    pending = server_engine.http_pending
+    for handshake_id in [h for h, entry in pending.items() if now - entry[4] > HTTP_HANDSHAKE_TTL_S]:
+        del pending[handshake_id]
+    while len(pending) >= HTTP_PENDING_MAX:
+        del pending[next(iter(pending))]  # dicts keep insertion order: oldest first
+
+
 @app.post("/pqc/hello")
 def http_pqc_hello():
     """Step 1 of the constrained node's handshake, over HTTP.
@@ -556,7 +572,9 @@ def http_pqc_hello():
     device_id = str(body.get("device_id", ""))
     encapsulation_key, decapsulation_key = generate_keypair()
     handshake_id = os.urandom(16).hex()
-    server_engine.http_pending[handshake_id] = (role, decapsulation_key, encapsulation_key, device_id)
+    now = time.monotonic()
+    _prune_http_pending(now)
+    server_engine.http_pending[handshake_id] = (role, decapsulation_key, encapsulation_key, device_id, now)
 
     payload = {
         "handshake_id": handshake_id,
@@ -583,9 +601,9 @@ def http_pqc_encapsulate():
     body = request.get_json(force=True, silent=True) or {}
     handshake_id = str(body.get("handshake_id", ""))
     entry = server_engine.http_pending.pop(handshake_id, None)
-    if entry is None:
+    if entry is None or time.monotonic() - entry[4] > HTTP_HANDSHAKE_TTL_S:
         return {"status": "rejected", "reason": "no handshake in progress"}, 400
-    role, decapsulation_key, encapsulation_key, hello_device = entry
+    role, decapsulation_key, encapsulation_key, hello_device, _ = entry
     device_id = str(body.get("device_id", "")) or hello_device
     kem_ciphertext = bytes.fromhex(body.get("kem_ciphertext", ""))
 
