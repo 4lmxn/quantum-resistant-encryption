@@ -56,7 +56,7 @@ which is exactly the default setpoint, so it can never be dunked in V-101.
 | 9 | 12 V DC adapter, **≥ 2 A** | pump ~0.5 A + valve ~0.5 A + headroom | ✅ check rating |
 | 10 | DC barrel jack → screw terminal adapter | so you never cut the adapter lead | buy |
 | 11 | 1N4007 diodes ×2 | 1 A / 1000 V (1N5819 also works). Flyback: one at the valve, one at the pump. The relay module's own diode protects only its coil, not these loads | buy |
-| 12 | LEDs green / yellow / red + 220 Ω ×3 | status lamps on the ESP32 | buy 2 + 2 resistors |
+| 12 | Red LEDs ×2 + 220 Ω ×2 | trip lamp (steady) and fault lamp (blinking); healthy is the onboard LED | ✅ |
 | 13 | T-100: clear plastic box, 2–3 L | wide enough for the pump and V-101 side by side | buy |
 | 14 | V-101: small clear jar, ~250 ml | stands inside T-100, lower than its rim | buy |
 | 15 | Drip tray or baking tray | the whole plant stands in it | buy |
@@ -213,7 +213,7 @@ always in the last thing you added.
    board and survive a power cycle, so a new venue only needs these two lines
    again, never a reflash. `help` lists the commands; `forget` clears the
    saved settings. With `make server` running the board prints
-   `[PQC] Session established`, and the yellow LED goes off and green comes on.
+   `[PQC] Session established`, the fault red stops blinking and the onboard LED lights.
 
    The ESP32 refuses any server whose offer is not signed by the key in its
    `keys.h`, so pointing it at the wrong address gets no session, never a fake
@@ -241,7 +241,7 @@ the table at each beat.
 
 | Beat | You do | Table | Dashboard |
 |---|---|---|---|
-| Handshake | power the ESP32 | yellow → green | esp32-01 in the PQC table, fingerprints agree |
+| Handshake | power the ESP32 | fault red stops blinking, onboard LED on | esp32-01 in the PQC table, fingerprints agree |
 | Normal running | nothing | water circulating | live TT-101 ≈ room temperature |
 | Signed setpoint | `make operator ARGS="setpoint 65"`, then `"setpoint 50"` | nothing moves | setpoint 80 → 65 → 50, green logs |
 | Signature is not enough | `make operator ARGS="setpoint 120"` | nothing moves | REFUSED: step > 15 °C, despite a valid signature |
@@ -251,9 +251,9 @@ the table at each beat.
 | Bypass | `make operator ARGS="bypass on"`, pour hot water | flow keeps running, no trip | BYPASS banner, time-boxed |
 | Manual ESD | ESD button on dashboard | flow stops | TRIPPED by operator |
 | Attacks | `make attack` | **nothing moves** | forged packets rejected in red |
-| Cut the network | Ctrl-C the server | flow stops within 6 s, yellow on | — |
+| Cut the network | Ctrl-C the server | flow stops within 6 s, fault red blinks | — |
 | Kill the actuator | Ctrl-C terminal 2 | flow stops within 3 s | — |
-| Probe failure | unplug the thermocouple | yellow on, green off | readings stop, never a fake value |
+| Probe failure | unplug the thermocouple | fault red blinks, onboard LED off | readings stop, never a fake value |
 
 Before the bypass beat, run `make operator ARGS="bypass off"` and `reset` if
 the latch is set, so each beat starts from HEALTHY.
