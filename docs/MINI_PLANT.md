@@ -48,7 +48,7 @@ which is exactly the default setpoint, so it can never be dunked in V-101.
 | 1 | ESP32 DevKit + USB cable | any 30/38-pin, USB-C or micro | ✅ |
 | 2 | Arduino Nano **or** Uno + USB cable | same sketch runs on both | ✅ Uno |
 | 3 | Breadboards ×2, jumpers M-M + M-F | | ✅ |
-| 4 | MAX6675 module + K-type probe | **stainless sheathed probe** if you can. The M6-screw probe that ships with most kits is fine only if just the metal tip goes in water. Its braided lead wicks water | buy |
+| 4 | MAX6675 module + K-type probe | fork terminals into the module's `+`/`−`. Only the metal tip goes in water: the braided fibreglass lead wicks it. A bare twisted-wire bead goes inside a closed-end metal straw or test tube, never straight into water | ✅ |
 | 5 | 12 V solenoid valve | **Normally Closed**, **direct-acting / 0 MPa minimum pressure**, plastic body, barbs that match your tube | ✅ check spec |
 | 6 | 12 V DC submersible pump | brushless DC, ~200–300 L/h, **DC not mains**: an aquarium pump with a 230 V plug is the wrong part | buy |
 | 7 | Clear tubing ~1.5 m | inner diameter = the pump outlet and valve barbs (usually 8 mm). Zip ties for clamps | buy |
