@@ -21,6 +21,13 @@
  * running dead-heads the pump against a shut valve, so the trip stops both,
  * the way a real ESD trips the pump alongside the block valve.
  *
+ * Hardware watchdog: the coil and pump kick back when the relay opens, and on
+ * the bench that spike froze the AVR (relay off, deaf to the keepalive) until
+ * someone pressed reset. The AVR watchdog now restarts it within 1 s of any
+ * hang; setup() comes back with the relay de-energised and the next keepalive
+ * from actuator.py reopens it. A flyback diode across the loads is still the
+ * real fix -- this only bounds how long a freeze can last.
+ *
  * Link watchdog: actuator.py re-sends the current state every second. If
  * nothing arrives for LINK_TIMEOUT_MS -- actuator crashed, session dropped,
  * USB pulled while the board stays powered -- this board shuts the plant down
@@ -36,6 +43,8 @@
  * protocol to compensate, that would silently swap OPEN and CLOSED in the log
  * actuator.py prints.
  */
+
+#include <avr/wdt.h>
 
 const int VALVE_PIN = 2;  // relay channel 1 -- XV-101 solenoid valve
 const int PUMP_PIN = 3;   // relay channel 2 -- P-101 circulation pump
@@ -67,6 +76,7 @@ void setPlant(bool run, const char *why) {
 }
 
 void setup() {
+  wdt_disable();  // a watchdog reset leaves it armed; settle before the slow parts
   // Set the de-energised level before the pin becomes an output, so an
   // active-LOW board never sees a LOW pulse (valve open) during boot.
   writeRelay(PUMP_PIN, false);
@@ -76,9 +86,11 @@ void setup() {
   Serial.begin(9600);
   running = true;  // force the boot transition to be logged
   setPlant(false, "boot -- opens only once actuator.py syncs us");
+  wdt_enable(WDTO_1S);
 }
 
 void loop() {
+  wdt_reset();
   if (Serial.available()) {
     char c = Serial.read();
     if (c == '1') {
