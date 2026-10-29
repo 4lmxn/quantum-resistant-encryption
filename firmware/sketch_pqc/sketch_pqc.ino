@@ -8,29 +8,36 @@
  * server's kyber-py / dilithium-py by `make pqc-interop`.
  *
  * Provision first:  make enroll  &&  make firmware-keys   (writes keys.h)
- * Then set WIFI_* and SERVER below.
+ * WiFi and the server address can then be set at the bench without reflashing:
+ * open the Serial Monitor at 115200 (line ending: Newline) and type `help`.
+ * The WIFI_* and SERVER constants below are only the defaults until then.
  *
  * This board is TT-101 on the mini plant (docs/MINI_PLANT.md). Its reading is
  * a real safety-lane input: at or above the setpoint the server latches a trip
- * and the actuator closes XV-101. Sensor, chosen by TT101_SENSOR below:
+ * and the actuator closes XV-101. Sensor, chosen by TT101_MAX6675 below:
  *   MAX6675 + K-type probe: SCK 18, SO 19, CS 5 (the real design)
  *   DHT22 fallback:         data on GPIO 15 (max 80 C -- the setpoint ceiling)
  *
  * Three lamps mirror what the server reports (each LED via 220R to GND):
  *   GREEN  GPIO 25 = HEALTHY, confirmed by the server on the last reading
  *   RED    GPIO 27 = TRIPPED, latched until a signed operator RESET
- *   YELLOW GPIO 26 = fault: no session, server unreachable, or sensor failed.
- *                    Green goes dark with it -- the board will not vouch for a
- *                    plant state it could not confirm.
+ *   YELLOW GPIO 26 = fault: no WiFi, no session, server unreachable, or sensor
+ *                    failed. Green goes dark with it -- the board will not
+ *                    vouch for a plant state it could not confirm.
  *
  * ML-DSA-65 signing needs ~45 KB of stack, so the handshake runs in a dedicated
  * FreeRTOS task with a 64 KB stack, not the 8 KB Arduino loop task.
+ *
+ * Every function is defined before its first use: the build stubs out ctags,
+ * so the Arduino builder generates no prototypes.
  */
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include "mbedtls/gcm.h"
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
+#include "mbedtls/platform_util.h"
 
 // Which transmitter TT-101 is. 1 = MAX6675 K-type thermocouple, 0 = DHT22.
 #define TT101_MAX6675 1
@@ -48,7 +55,8 @@ extern "C" {
 }
 #include "keys.h"       // DEVICE_ID, DEVICE_SECRET, SERVER_PUBLIC  (generated, gitignored)
 
-// Real hardware: the ESP32 must join the SAME network as the machine running
+// Defaults only: `wifi` and `server` on the Serial Monitor override them and
+// persist in NVS. The ESP32 must join the SAME network as the machine running
 // `make server`. 2.4 GHz only -- the ESP32 has no 5 GHz radio.
 static const char *WIFI_SSID = "YOUR_WIFI_SSID";
 static const char *WIFI_PASS = "YOUR_WIFI_PASSWORD";
@@ -70,10 +78,16 @@ static const int YELLOW_LED_PIN = 26;
 static const int RED_LED_PIN = 27;
 
 #if TT101_MAX6675
+static const char *SENSOR_NAME = "MAX6675 K-type thermocouple";
 // The MAX6675 converts in ~220 ms; one reading a second is real time for a
 // thermal process and keeps the HTTP leg comfortably under its round trip.
 static const uint32_t SAMPLE_PERIOD_MS = 1000;
+// Calibration knob. A MAX6675 with a cheap K-type probe is commonly a few
+// degrees off; check it against ice water or a reference thermometer on the
+// bench and put the correction here, rather than moving the trip setpoint.
+static const float TC_OFFSET_C = 0.0f;
 #else
+static const char *SENSOR_NAME = "DHT22 (fallback, max 80 C)";
 // The DHT22 cannot sample faster than once every 2 s.
 static const uint32_t SAMPLE_PERIOD_MS = 2000;
 #endif
@@ -81,14 +95,160 @@ static const uint32_t SAMPLE_PERIOD_MS = 2000;
 // the server restarted and forgot it) and a fresh handshake is run.
 static const int MAX_POST_FAILURES = 3;
 
+// Every HTTP call is bounded, so a dead or unreachable server costs at most
+// connect + read (~6 s) of the loop or of the handshake task, never a hang.
+static const int32_t HTTP_CONNECT_TIMEOUT_MS = 3000;
+static const uint16_t HTTP_READ_TIMEOUT_MS = 3000;
+// How long one WiFi join attempt is given before it is restarted. A WPA2 join
+// takes 2-4 s; restarting sooner could abort a join that was about to land.
+static const uint32_t WIFI_RETRY_MS = 10000;
+
+static const char *NVS_NAMESPACE = "tt101";
+
 // Sizes from the vendored PQClean headers.
 #define EK_BYTES  PQCLEAN_MLKEM768_CLEAN_CRYPTO_PUBLICKEYBYTES   // 1184
 #define CT_BYTES  PQCLEAN_MLKEM768_CLEAN_CRYPTO_CIPHERTEXTBYTES  // 1088
 #define SIG_BYTES PQCLEAN_MLDSA65_CLEAN_CRYPTO_BYTES             // 3309
 
+// ---------------------------------------------------------------- commands --
+/* Serial provisioning commands, one per line. The venue WiFi and the server
+   laptop's address are what change between benches, so they are typed in
+   rather than compiled in. This section is plain C on purpose -- no Arduino
+   calls -- so the parser can be compiled and tested on a host.
+
+     wifi <ssid> <password>       quote an SSID with spaces: wifi "Lab Guest" pa55word
+     server http://<host>:<port>  base URL only; trailing slashes are stripped
+     show | help | forget | reboot                                              */
+
+static const size_t CMD_LINE_MAX = 160;
+static const size_t SSID_MAX = 32;    // 802.11 limit, in bytes
+static const size_t PASS_MIN = 8;     // WPA2-PSK passphrase; open networks are not supported
+static const size_t PASS_MAX = 63;
+static const size_t SERVER_MAX = 96;
+
+enum CommandKind { CMD_EMPTY, CMD_HELP, CMD_SHOW, CMD_REBOOT, CMD_FORGET,
+                   CMD_WIFI, CMD_SERVER, CMD_INVALID };
+
+struct Command {
+  CommandKind kind;
+  const char *error;            // why, when kind == CMD_INVALID
+  char ssid[SSID_MAX + 1];
+  char pass[PASS_MAX + 1];
+  char server[SERVER_MAX + 1];
+};
+
+static bool isBlank(char ch) { return ch == ' ' || ch == '\t'; }
+
+static void invalid(Command *c, const char *why) {
+  c->kind = CMD_INVALID;
+  c->error = why;
+}
+
+/* The password is everything after the SSID, so it may contain spaces and
+   quotes of its own; only an SSID with spaces needs quoting. */
+static void parseWifi(const char *p, const char *end, Command *c) {
+  if (p == end) return invalid(c, "usage: wifi <ssid> <password>  (quote an SSID with spaces)");
+  const char *s, *se;
+  if (*p == '"') {
+    s = ++p;
+    while (p < end && *p != '"') p++;
+    if (p == end) return invalid(c, "SSID has an opening quote but no closing one");
+    se = p++;
+    if (p < end && !isBlank(*p)) return invalid(c, "put a space after the quoted SSID");
+  } else {
+    s = p;
+    while (p < end && !isBlank(*p)) p++;
+    se = p;
+  }
+  while (p < end && isBlank(*p)) p++;
+  size_t sl = se - s, pl = end - p;
+  if (sl == 0) return invalid(c, "SSID is empty");
+  if (sl > SSID_MAX) return invalid(c, "SSID is longer than 32 bytes");
+  if (pl == 0) return invalid(c, "missing password (open networks are not supported)");
+  if (pl < PASS_MIN || pl > PASS_MAX) return invalid(c, "WPA2 password must be 8-63 characters");
+  memcpy(c->ssid, s, sl); c->ssid[sl] = 0;
+  memcpy(c->pass, p, pl); c->pass[pl] = 0;
+  c->kind = CMD_WIFI;
+}
+
+/* A base URL the node can append /pqc/hello, /pqc/encapsulate and /telemetry
+   to. The port is required: forgetting it would silently aim at port 80,
+   where nothing answers, and look like a dead server. */
+static void parseServer(const char *p, const char *end, Command *c) {
+  if (p == end) return invalid(c, "usage: server http://<host>:<port>");
+  if (end - p < 7 || strncasecmp(p, "http://", 7) != 0)
+    return invalid(c, "server must start with http:// (no TLS: ML-DSA authenticates the server)");
+  while (end - p > 7 && end[-1] == '/') end--;
+  const char *host = p + 7, *colon = NULL;
+  for (const char *q = host; q < end; q++) {
+    if (!isgraph((unsigned char)*q) || *q == '/' || *q == '?' || *q == '#' || *q == '@' || *q == '"')
+      return invalid(c, "server is a base URL only: http://<host>:<port>, no path");
+    if (*q == ':' && !colon) colon = q;
+  }
+  if (host == end || colon == host) return invalid(c, "server URL has no host");
+  if (!colon || colon + 1 == end) return invalid(c, "include the port, e.g. http://192.168.1.20:5001");
+  long port = 0;
+  for (const char *d = colon + 1; d < end; d++) {
+    if (!isdigit((unsigned char)*d)) return invalid(c, "port must be a number");
+    port = port * 10 + (*d - '0');
+    if (port > 65535) return invalid(c, "port must be 1-65535");
+  }
+  if (port == 0) return invalid(c, "port must be 1-65535");
+  size_t n = end - p;
+  if (n > SERVER_MAX) return invalid(c, "server URL is longer than 96 characters");
+  memcpy(c->server, "http://", 7);  // normalise the scheme's case
+  memcpy(c->server + 7, host, n - 7);
+  c->server[n] = 0;
+  c->kind = CMD_SERVER;
+}
+
+static void parseCommand(const char *line, Command *c) {
+  memset(c, 0, sizeof(*c));
+  const char *end = line + strlen(line);
+  while (line < end && isspace((unsigned char)*line)) line++;
+  while (end > line && isspace((unsigned char)end[-1])) end--;
+  if (line == end) { c->kind = CMD_EMPTY; return; }
+
+  const char *verbEnd = line;
+  while (verbEnd < end && !isBlank(*verbEnd)) verbEnd++;
+  const char *arg = verbEnd;
+  while (arg < end && isBlank(*arg)) arg++;
+  size_t vl = verbEnd - line;
+  auto is = [&](const char *word) { return strlen(word) == vl && strncasecmp(line, word, vl) == 0; };
+
+  if (is("wifi")) return parseWifi(arg, end, c);
+  if (is("server")) return parseServer(arg, end, c);
+  CommandKind kind = (is("help") || is("?")) ? CMD_HELP
+                   : is("show")              ? CMD_SHOW
+                   : is("reboot")            ? CMD_REBOOT
+                   : is("forget")            ? CMD_FORGET
+                                             : CMD_INVALID;
+  if (kind == CMD_INVALID) return invalid(c, "unknown command; type 'help'");
+  if (arg != end) return invalid(c, "this command takes no arguments");
+  c->kind = kind;
+}
+
+// ---------------------------------------------------------------- state -----
+
+// Live configuration. Written only by loop() (serial commands); the handshake
+// task reads g_server through a snapshot taken under g_mux.
+static char g_ssid[SSID_MAX + 1];
+static char g_pass[PASS_MAX + 1];
+static char g_server[SERVER_MAX + 1];
+static bool g_wifi_saved = false;    // true = from NVS, false = compiled default
+static bool g_server_saved = false;
+
 static uint8_t g_session_key[32];
 static volatile bool g_have_key = false;
 static volatile bool g_handshaking = false;
+// Bumped whenever the current session stops being trustworthy (WiFi dropped,
+// server or network changed, posts rejected). A handshake that started under
+// an older generation is discarded instead of installed, so a session agreed
+// with the previous server can never be used against the new one.
+static uint32_t g_session_gen = 0;  // only touched under g_mux, which is the barrier
+static portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t g_wifi_attempt_ms = 0;
+
 #if TT101_MAX6675
 // RobTillaart's constructor is (select, miso, clock) -- not Adafruit's order.
 static MAX6675 thermocouple(TC_CS_PIN, TC_SO_PIN, TC_SCK_PIN);
@@ -133,13 +293,20 @@ static size_t jsonHex(const String &body, const char *key, char *out, size_t cap
   return len;
 }
 
-static String postJson(const char *path, const String &body) {
+static String postJson(const char *server, const char *path, const String &body) {
   HTTPClient http;
-  http.begin(String(SERVER) + path);
+  http.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
+  http.setTimeout(HTTP_READ_TIMEOUT_MS);
+  if (!http.begin(String(server) + path)) {
+    Serial.printf("[NET] Cannot parse server URL %s\n", server);
+    return String("");
+  }
   http.addHeader("Content-Type", "application/json");
   int code = http.POST((uint8_t *)body.c_str(), body.length());
   String resp = (code == 200) ? http.getString() : String("");
-  if (code != 200) Serial.printf("[NET] POST %s -> HTTP %d\n", path, code);
+  if (code != 200)
+    Serial.printf("[NET] POST %s%s -> %d %s\n", server, path, code,
+                  code < 0 ? HTTPClient::errorToString(code).c_str() : "");
   http.end();
   return resp;
 }
@@ -172,9 +339,12 @@ static void fingerprint16(const uint8_t key[32], char out[17]) {
 
 // ---------------------------------------------------------------- handshake -
 
-static bool runHandshake() {
+/* Runs one handshake against `server` and leaves the agreed key in key_out.
+   It does not install the key: handshakeTask() decides whether it is still
+   wanted. */
+static bool runHandshake(const char *server, uint8_t key_out[32]) {
   // Step 1: hello
-  String hello = postJson("/pqc/hello",
+  String hello = postJson(server, "/pqc/hello",
                           String("{\"device_id\":\"") + DEVICE_ID + "\",\"role\":\"" + ROLE + "\"}");
   if (hello.length() == 0) return false;
 
@@ -185,31 +355,35 @@ static bool runHandshake() {
   if (jsonHex(hello, "\"encapsulation_key\"", ekHex, sizeof(ekHex)) != EK_BYTES * 2) return false;
 
   static uint8_t ek[EK_BYTES];
-  fromHex(ekHex, ek, EK_BYTES);
+  if (!fromHex(ekHex, ek, EK_BYTES)) return false;
 
-  // Step 2: verify the server's ML-DSA-65 signature over prefix||ek
-  if (jsonHex(hello, "\"server_signature\"", sigHex, sizeof(sigHex))) {
-    static uint8_t ssig[SIG_BYTES];
-    size_t slen = strlen(sigHex) / 2;
-    fromHex(sigHex, ssig, slen);
-    size_t pl = strlen(TRANSCRIPT_PREFIX);
-    static uint8_t tr[64 + EK_BYTES];
-    memcpy(tr, TRANSCRIPT_PREFIX, pl);
-    memcpy(tr + pl, ek, EK_BYTES);
-    if (PQCLEAN_MLDSA65_CLEAN_crypto_sign_verify(ssig, slen, tr, pl + EK_BYTES, SERVER_PUBLIC) != 0) {
-      Serial.println("[PQC] ABORT: server signature invalid — possible MITM.");
-      return false;
-    }
-    Serial.println("[PQC] Server identity verified (ML-DSA-65).");
+  // Step 2: verify the server's ML-DSA-65 signature over prefix||ek against the
+  // pinned SERVER_PUBLIC. A missing signature is refused exactly like a bad
+  // one: an unsigned offer is what a rogue server or a man in the middle would
+  // send, and this check is what makes the URL safe to change at runtime.
+  static uint8_t ssig[SIG_BYTES];
+  if (jsonHex(hello, "\"server_signature\"", sigHex, sizeof(sigHex)) != SIG_BYTES * 2 ||
+      !fromHex(sigHex, ssig, SIG_BYTES)) {
+    Serial.println("[PQC] ABORT: server offer is unsigned or malformed — possible MITM.");
+    return false;
   }
+  size_t pl = strlen(TRANSCRIPT_PREFIX);
+  static uint8_t tr[64 + EK_BYTES];
+  memcpy(tr, TRANSCRIPT_PREFIX, pl);
+  memcpy(tr + pl, ek, EK_BYTES);
+  if (PQCLEAN_MLDSA65_CLEAN_crypto_sign_verify(ssig, SIG_BYTES, tr, pl + EK_BYTES, SERVER_PUBLIC) != 0) {
+    Serial.println("[PQC] ABORT: server signature invalid — possible MITM.");
+    return false;
+  }
+  Serial.println("[PQC] Server identity verified (ML-DSA-65).");
 
   // Step 3: encapsulate, derive the session key
   static uint8_t ct[CT_BYTES], ss[32];
   PQCLEAN_MLKEM768_CLEAN_crypto_kem_enc(ct, ss, ek);
-  deriveSessionKey(ss, g_session_key);
+  deriveSessionKey(ss, key_out);
+  mbedtls_platform_zeroize(ss, sizeof(ss));
 
   // Step 4: sign prefix||ek||"|"||ct with our device key
-  size_t pl = strlen(TRANSCRIPT_PREFIX);
   static uint8_t tr2[64 + EK_BYTES + 1 + CT_BYTES];
   size_t o = 0;
   memcpy(tr2 + o, TRANSCRIPT_PREFIX, pl); o += pl;
@@ -226,16 +400,15 @@ static bool runHandshake() {
   char fp[17];
   toHex(ct, CT_BYTES, ctHex);
   toHex(dsig, dsl, dsigHex);
-  fingerprint16(g_session_key, fp);
+  fingerprint16(key_out, fp);
 
   String body = String("{\"handshake_id\":\"") + hid + "\",\"device_id\":\"" + DEVICE_ID +
                 "\",\"kem_ciphertext\":\"" + ctHex + "\",\"device_signature\":\"" + dsigHex +
                 "\",\"key_fingerprint\":\"" + fp + "\"}";
-  String est = postJson("/pqc/encapsulate", body);
+  String est = postJson(server, "/pqc/encapsulate", body);
   if (est.indexOf("established") < 0) { Serial.println("[PQC] Handshake refused."); return false; }
 
   Serial.printf("[PQC] Session established. Key fingerprint %s\n", fp);
-  g_have_key = true;
   return true;
 }
 
@@ -273,14 +446,46 @@ static String sealAndPost(float temp, float hum) {
   toHex(ct, len + 16, cHex);
   String body = String("{\"device_id\":\"") + DEVICE_ID + "\",\"nonce\":\"" + nHex +
                 "\",\"ciphertext\":\"" + cHex + "\"}";
-  String r = postJson("/telemetry", body);
+  String r = postJson(g_server, "/telemetry", body);
   return r.indexOf("accepted") >= 0 ? r : String("");
 }
 
 // ---------------------------------------------------------------- tasks -----
 
+/* Drops the current session: the key is wiped, the lamps go to FAULT on the
+   next pass, and loop() starts a fresh handshake once WiFi is up. */
+static void invalidateSession() {
+  portENTER_CRITICAL(&g_mux);
+  g_session_gen++;
+  g_have_key = false;
+  mbedtls_platform_zeroize(g_session_key, sizeof(g_session_key));
+  portEXIT_CRITICAL(&g_mux);
+}
+
 static void handshakeTask(void *) {
-  while (!runHandshake()) {
+  static char server[SERVER_MAX + 1];
+  static uint8_t key[32];
+  // Exits when WiFi drops; loop() starts a new task once it is back.
+  while (WiFi.status() == WL_CONNECTED) {
+    portENTER_CRITICAL(&g_mux);
+    uint32_t gen = g_session_gen;
+    memcpy(server, g_server, sizeof(server));
+    portEXIT_CRITICAL(&g_mux);
+
+    bool ok = runHandshake(server, key);
+    bool installed = false;
+    if (ok) {
+      portENTER_CRITICAL(&g_mux);
+      if (gen == g_session_gen) {
+        memcpy(g_session_key, key, sizeof(key));
+        g_have_key = true;
+        installed = true;
+      }
+      portEXIT_CRITICAL(&g_mux);
+    }
+    mbedtls_platform_zeroize(key, sizeof(key));
+    if (installed) break;
+    if (ok) { Serial.println("[PQC] Settings changed mid-handshake; discarding that session."); continue; }
     Serial.println("[PQC] Handshake failed; retrying in 3s.");
     vTaskDelay(pdMS_TO_TICKS(3000));
   }
@@ -290,35 +495,19 @@ static void handshakeTask(void *) {
 
 static void startHandshake() {
   if (g_handshaking) return;
-  g_have_key = false;
   g_handshaking = true;
   // 64 KB stack: ML-DSA-65 signing needs ~45 KB, far past the 8 KB loop task.
-  xTaskCreatePinnedToCore(handshakeTask, "pqc-handshake", 64 * 1024, NULL, 1, NULL, 1);
+  // It is allocated per handshake, so after many reconnects a fragmented heap
+  // can refuse it; say so rather than wait forever on a task that never ran.
+  if (xTaskCreatePinnedToCore(handshakeTask, "pqc-handshake", 64 * 1024, NULL, 1, NULL, 1) != pdPASS) {
+    g_handshaking = false;
+    Serial.printf("[PQC] No room for the 64 KB handshake stack (largest free block %lu B); retrying.\n",
+                  (unsigned long)ESP.getMaxAllocHeap());
+    delay(1000);
+  }
 }
 
-void setup() {
-  Serial.begin(115200);
-  delay(600);
-  Serial.printf("\n[BOOT] %s — full post-quantum handshake node\n", DEVICE_ID);
-
-  pinMode(GREEN_LED_PIN, OUTPUT);
-  pinMode(YELLOW_LED_PIN, OUTPUT);
-  pinMode(RED_LED_PIN, OUTPUT);
-  digitalWrite(YELLOW_LED_PIN, HIGH);  // fault until the server confirms otherwise
-#if TT101_MAX6675
-  thermocouple.begin();
-  delay(500);  // MAX6675 needs ~200 ms after power-up before its first conversion
-#else
-  dht.setup(DHT_PIN, DHTesp::DHT22);
-#endif
-
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("[NET] WiFi");
-  while (WiFi.status() != WL_CONNECTED) { delay(200); Serial.print("."); }
-  Serial.printf(" up as %s\n", WiFi.localIP().toString().c_str());
-
-  startHandshake();
-}
+// ---------------------------------------------------------------- lamps -----
 
 // Unknown plant state: yellow on, green off. Red keeps its last confirmed
 // value -- a latched trip does not clear because the link dropped.
@@ -333,16 +522,29 @@ static void showPlantState(bool tripped) {
   digitalWrite(RED_LED_PIN, tripped ? HIGH : LOW);
 }
 
+// ---------------------------------------------------------------- sensor ----
+
 /* Process temperature in C, or NAN if the sensor could not be read. A burnt-out
    probe must never be published as a plausible number: on the safety lane a
    confident wrong reading is worse than an obvious absence. */
 static float readProcessTemperature(float *humidity) {
 #if TT101_MAX6675
   uint8_t status = thermocouple.read();
+  uint16_t raw = thermocouple.getRawData();
+  if (status == STATUS_ERROR) {
+    Serial.println("[SENSOR] MAX6675: open thermocouple -- probe unplugged or broken");
+    return NAN;
+  }
   if (status != STATUS_OK) {
-    Serial.printf("[SENSOR] MAX6675 status 0x%02X (%s)\n", status,
-                  status == STATUS_NOREAD ? "open thermocouple / no probe"
-                                          : "SPI fault -- check GPIO 18/19/5");
+    Serial.printf("[SENSOR] MAX6675: no SPI answer (status 0x%02X) -- check GPIO 18/19/5 and 3V3\n", status);
+    return NAN;
+  }
+  // Bits 15 and 1 of a real MAX6675 frame are always 0. An all-zero frame is
+  // what a dead SCK or an unpowered chip reads as, and it decodes to a
+  // confident 0.00 C, so it is refused too -- at the price of a genuine
+  // 0.00 C reading in ice water also showing FAULT.
+  if (raw == 0 || (raw & 0x8002)) {
+    Serial.printf("[SENSOR] MAX6675: implausible SPI frame 0x%04X -- check GPIO 18/19/5\n", raw);
     return NAN;
   }
   *humidity = NAN;  // not measured; sealAndPost omits the key in this mode
@@ -359,12 +561,231 @@ static float readProcessTemperature(float *humidity) {
 #endif
 }
 
+// ---------------------------------------------------------------- wifi ------
+
+static const char *wifiReason(wl_status_t s) {
+  switch (s) {
+    case WL_CONNECTED:       return "connected";
+    case WL_NO_SSID_AVAIL:   return "SSID not found -- check the name; the ESP32 is 2.4 GHz only";
+    case WL_CONNECT_FAILED:  return "join refused -- wrong password?";
+    case WL_CONNECTION_LOST: return "connection lost";
+    default:                 return "no answer from the access point yet";
+  }
+}
+
+static void beginWifi() {
+  WiFi.disconnect();
+  WiFi.begin(g_ssid, g_pass);
+  g_wifi_attempt_ms = millis();
+}
+
+/* Never blocks. A dead SSID is retried every WIFI_RETRY_MS while loop() keeps
+   reading Serial, so wrong credentials can be fixed with `wifi` on the spot.
+   Any change of link state drops the session: after an outage the server may
+   have restarted and forgotten it, and a fresh handshake is cheaper than
+   three rejected posts finding that out. */
+static void serviceWifi() {
+  static bool up = false;
+  bool now = WiFi.status() == WL_CONNECTED;
+  if (now != up) {
+    up = now;
+    invalidateSession();
+    if (now) {
+      Serial.printf("[NET] WiFi up on \"%s\" as %s\n", g_ssid, WiFi.localIP().toString().c_str());
+    } else {
+      // No rejoin here: the retry below fires at once after a long-held link,
+      // and leaves alone a join that `wifi` has only just started.
+      Serial.println("[NET] WiFi lost -- FAULT until it is back and a fresh handshake completes.");
+    }
+  }
+  if (!now && millis() - g_wifi_attempt_ms >= WIFI_RETRY_MS) {
+    Serial.printf("[NET] WiFi \"%s\" not joined (%s); retrying.\n", g_ssid, wifiReason(WiFi.status()));
+    beginWifi();
+  }
+}
+
+// ---------------------------------------------------------------- provisioning
+
+/* Loads the saved WiFi and server, or the compiled defaults. NVS survives a
+   reflash, so once something is saved the constants above stop mattering;
+   `show` and the boot banner say which one is in use, and `forget` clears it. */
+static void loadConfig() {
+  Preferences prefs;
+  bool open = prefs.begin(NVS_NAMESPACE, true);  // read-only; fails until something is saved
+  g_wifi_saved = open && prefs.isKey("ssid") && prefs.isKey("pass") &&
+                 prefs.getString("ssid", g_ssid, sizeof(g_ssid)) > 0 &&
+                 prefs.getString("pass", g_pass, sizeof(g_pass)) > 0;
+  if (!g_wifi_saved) {
+    strlcpy(g_ssid, WIFI_SSID, sizeof(g_ssid));
+    strlcpy(g_pass, WIFI_PASS, sizeof(g_pass));
+  }
+  g_server_saved = open && prefs.isKey("server") &&
+                   prefs.getString("server", g_server, sizeof(g_server)) > 0;
+  if (!g_server_saved) strlcpy(g_server, SERVER, sizeof(g_server));
+  if (open) prefs.end();
+}
+
+static bool savePref(const char *key, const char *value) {
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, false)) return false;
+  bool ok = prefs.putString(key, value) == strlen(value);
+  prefs.end();
+  return ok;
+}
+
+static void printShow() {
+  Serial.printf("[CFG] device   %s\n", DEVICE_ID);
+  Serial.printf("[CFG] sensor   %s\n", SENSOR_NAME);
+  Serial.printf("[CFG] wifi     \"%s\" (%s)\n", g_ssid, g_wifi_saved ? "saved" : "compiled default");
+  Serial.printf("[CFG] server   %s (%s)\n", g_server, g_server_saved ? "saved" : "compiled default");
+  if (WiFi.status() == WL_CONNECTED)
+    Serial.printf("[CFG] link     WiFi up, IP %s, RSSI %d dBm\n",
+                  WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+  else
+    Serial.printf("[CFG] link     WiFi down: %s\n", wifiReason(WiFi.status()));
+  Serial.printf("[CFG] session  %s\n", g_have_key    ? "established (ML-KEM-768 + ML-DSA-65)"
+                                       : g_handshaking ? "handshake in progress"
+                                                       : "none");
+}
+
+static void printHelp() {
+  Serial.println("[CFG] Commands, one per line (Serial Monitor line ending: Newline):");
+  Serial.println("  wifi <ssid> <password>       join a WPA2 network; quote an SSID with spaces:");
+  Serial.println("                               wifi \"Lab Guest\" pa55word");
+  Serial.println("  server http://<host>:<port>  the machine running `make server`, e.g. http://192.168.1.20:5001");
+  Serial.println("  show                         settings and link state (never the password)");
+  Serial.println("  forget                       erase saved settings and reboot to the compiled defaults");
+  Serial.println("  reboot                       restart the board");
+}
+
+/* Changing the server here is not a way in. The node pins SERVER_PUBLIC from
+   keys.h and aborts the handshake unless the offer carries a valid ML-DSA-65
+   signature from that key, so pointing it at a rogue server yields no session
+   and no telemetry -- just a FAULT lamp. Changing WiFi is no worse: whoever
+   holds the USB port can already reflash the board. */
+static void handleCommand(const char *line) {
+  Command c;
+  parseCommand(line, &c);
+  switch (c.kind) {
+    case CMD_EMPTY: break;
+    case CMD_INVALID: Serial.printf("[CFG] %s\n", c.error); break;
+    case CMD_HELP: printHelp(); break;
+    case CMD_SHOW: printShow(); break;
+    case CMD_REBOOT:
+      Serial.println("[CFG] Rebooting.");
+      Serial.flush();
+      ESP.restart();
+      break;
+    case CMD_FORGET: {
+      Preferences prefs;
+      if (prefs.begin(NVS_NAMESPACE, false)) { prefs.clear(); prefs.end(); }
+      Serial.println("[CFG] Saved settings erased; rebooting to the compiled defaults.");
+      Serial.flush();
+      ESP.restart();
+      break;
+    }
+    case CMD_WIFI:
+      strlcpy(g_ssid, c.ssid, sizeof(g_ssid));
+      strlcpy(g_pass, c.pass, sizeof(g_pass));
+      g_wifi_saved = savePref("pass", g_pass) && savePref("ssid", g_ssid);
+      Serial.printf("[CFG] WiFi set to \"%s\" (password not shown)%s; reconnecting.\n", g_ssid,
+                    g_wifi_saved ? ", saved" : " -- NOT saved, lost on reboot");
+      invalidateSession();
+      beginWifi();
+      break;
+    case CMD_SERVER:
+      portENTER_CRITICAL(&g_mux);
+      strlcpy(g_server, c.server, sizeof(g_server));
+      portEXIT_CRITICAL(&g_mux);
+      g_server_saved = savePref("server", g_server);
+      Serial.printf("[CFG] Server set to %s%s; re-running the handshake.\n", g_server,
+                    g_server_saved ? ", saved" : " -- NOT saved, lost on reboot");
+      invalidateSession();
+      break;
+  }
+  mbedtls_platform_zeroize(&c, sizeof(c));  // it may hold the WiFi password
+}
+
+/* Non-blocking: takes whatever bytes have arrived and returns. A telemetry post
+   can hold loop() for up to ~6 s; typing meanwhile waits in the 256-byte UART
+   buffer, which is longer than any valid command. */
+static void serviceSerial() {
+  static char line[CMD_LINE_MAX + 1];
+  static size_t len = 0;
+  static bool overflow = false;
+  while (Serial.available() > 0) {
+    char ch = (char)Serial.read();
+    if (ch != '\n' && ch != '\r') {
+      if (len < CMD_LINE_MAX) line[len++] = ch; else overflow = true;
+      continue;
+    }
+    line[len] = 0;
+    if (overflow) Serial.printf("[CFG] Ignored a line longer than %u characters.\n", (unsigned)CMD_LINE_MAX);
+    else if (len > 0) handleCommand(line);
+    mbedtls_platform_zeroize(line, sizeof(line));
+    len = 0;
+    overflow = false;
+  }
+}
+
+// ---------------------------------------------------------------- main ------
+
+void setup() {
+  Serial.begin(115200);
+  delay(600);
+
+  pinMode(GREEN_LED_PIN, OUTPUT);
+  pinMode(YELLOW_LED_PIN, OUTPUT);
+  pinMode(RED_LED_PIN, OUTPUT);
+  digitalWrite(YELLOW_LED_PIN, HIGH);  // fault until the server confirms otherwise
+#if TT101_MAX6675
+  thermocouple.begin();
+  // The library's own note: SO needs a pull-up. Without one, a missing or
+  // unpowered MAX6675 floats the line and can decode as a plausible reading;
+  // with it, the read is 0xFFFF and reported as no communication.
+  pinMode(TC_SO_PIN, INPUT_PULLUP);
+  // Bit-banged SPI: at 240 MHz the ESP32 samples SO almost on the falling SCK
+  // edge, inside the chip's 100 ns data-valid time. 1 us per half-clock keeps
+  // the frame clean and costs ~40 us per read.
+  thermocouple.setSWSPIdelay(2);
+  thermocouple.setOffset(TC_OFFSET_C);
+  delay(500);  // MAX6675 needs ~200 ms after power-up before its first conversion
+#else
+  dht.setup(DHT_PIN, DHTesp::DHT22);
+#endif
+
+  loadConfig();
+  Serial.printf("\n[BOOT] %s — full post-quantum handshake node\n", DEVICE_ID);
+  Serial.printf("[BOOT] sensor %s\n", SENSOR_NAME);
+  Serial.printf("[BOOT] wifi   \"%s\" (%s)\n", g_ssid, g_wifi_saved ? "saved" : "compiled default");
+  Serial.printf("[BOOT] server %s (%s)\n", g_server, g_server_saved ? "saved" : "compiled default");
+  Serial.println("[BOOT] type 'help' to change WiFi/server without reflashing");
+
+  // persistent(false): the credentials live in our own NVS namespace, so the
+  // WiFi driver need not rewrite its copy to flash on every join. Reconnects
+  // are ours too (serviceWifi), so the driver's own retry cannot race them.
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false);
+  beginWifi();
+  Serial.printf("[NET] Joining \"%s\"...\n", g_ssid);
+}
+
 void loop() {
   static uint32_t lastSample = 0;
   static int failures = 0;
 
-  if (!g_have_key) { showFault(); delay(50); return; }
-  if (millis() - lastSample < SAMPLE_PERIOD_MS) { delay(20); return; }
+  serviceSerial();
+  serviceWifi();
+  if (WiFi.status() != WL_CONNECTED) { showFault(); delay(10); return; }
+  if (!g_have_key) {
+    showFault();
+    failures = 0;
+    startHandshake();  // no-op while one is already running
+    delay(10);
+    return;
+  }
+  if (millis() - lastSample < SAMPLE_PERIOD_MS) { delay(10); return; }
   lastSample = millis();
 
   float humidity = 0.0f;
@@ -382,8 +803,7 @@ void loop() {
                   ++failures, MAX_POST_FAILURES);
     if (failures >= MAX_POST_FAILURES) {
       Serial.println("[PQC] Session presumed lost; re-running the handshake.");
-      failures = 0;
-      startHandshake();
+      invalidateSession();  // the next pass starts it
     }
     return;
   }

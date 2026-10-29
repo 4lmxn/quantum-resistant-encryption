@@ -61,6 +61,14 @@ make firmware-keys   # emits firmware/sketch_pqc/keys.h (gitignored; holds the d
 make firmware-pqc-node
 ```
 
+WiFi and the server address are set at runtime, not compiled in: after
+flashing, open the Serial Monitor (115200, line ending Newline) and type
+`wifi "Your Network" password` and `server http://<Mac LAN IP>:5001`. They are
+saved in NVS and survive power cycles and reflashes (`forget` clears them);
+`show` prints the current settings without the password or any key. Changing
+the server is not a way in: the node pins the server's ML-DSA public key from
+`keys.h` and aborts any handshake whose offer is unsigned or fails to verify.
+
 It is proven end-to-end against the running server: `tests/test_firmware_e2e.py`
 drives the firmware's exact C crypto through the real /pqc endpoints and the
 server answers `agreed: true`. The only thing left to a physical board is the
