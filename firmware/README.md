@@ -48,8 +48,10 @@ What was checked, empirically:
   `tests/test_pqc_interop.py`).
 
 **The full handshake firmware is built.** `firmware/sketch_pqc/` runs the whole
-ML-KEM-768 + ML-DSA-65 handshake on the ESP32 -- in a 64 KB FreeRTOS task,
-because ML-DSA-65 signing needs ~45 KB of stack -- derives the session key with
+ML-KEM-768 + ML-DSA-65 handshake on the ESP32 -- in a 96 KB FreeRTOS task
+created once at boot, because PQClean's ML-DSA-65 keeps ~78 KB on the stack to
+sign and ~56 KB to verify (a 64 KB stack overflowed on the first bench run and
+showed up as "server signature invalid") -- derives the session key with
 SHAKE-256 + HKDF-SHA256 exactly as the server does, and seals telemetry with it.
 It compiles at 79% of flash (`make firmware-pqc-node`).
 

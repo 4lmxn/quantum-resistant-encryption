@@ -76,6 +76,22 @@ def test_malformed_signature_is_a_rejection_not_a_crash():
         assert identity.verify(registry.server_public, transcript, bad) is False
 
 
+def test_transcript_layout_matches_the_firmware():
+    """sketch_pqc.ino rebuilds these bytes by hand in C. On the first bench run
+    it dropped the separator the empty ciphertext slot leaves behind, and every
+    genuine server offer failed on the board as "possible MITM". Pin the layout,
+    and the prefix the firmware actually compiles in."""
+    import pathlib
+    import re
+    sketch = (pathlib.Path(__file__).resolve().parent.parent
+              / "firmware" / "sketch_pqc" / "sketch_pqc.ino").read_text()
+    prefix = re.search(r'TRANSCRIPT_PREFIX = "([^"]+)"', sketch).group(1).encode()
+    ek, ct = b"E" * 1184, b"C" * 1088
+    assert identity.handshake_transcript("sensor", ek) == prefix + ek + b"|"
+    assert identity.handshake_transcript("sensor", ek, ct) == prefix + ek + b"|" + ct
+    assert "tr[pl + EK_BYTES] = '|';" in sketch, "firmware no longer appends the offer's trailing separator"
+
+
 if __name__ == "__main__":
     for name, check in sorted(globals().items()):
         if name.startswith("test_"):

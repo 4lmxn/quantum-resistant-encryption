@@ -29,8 +29,9 @@
  * The fault lamp blinks rather than glowing steady so the rig works with two
  * LEDs of the same colour: steady means tripped, blinking means fault.
  *
- * ML-DSA-65 signing needs ~45 KB of stack, so the handshake runs in a dedicated
- * FreeRTOS task with a 64 KB stack, not the 8 KB Arduino loop task.
+ * ML-DSA-65 needs ~78 KB of stack to sign and ~56 KB to verify, so the
+ * handshake runs in a dedicated 96 KB FreeRTOS task created once at boot, not
+ * the 8 KB Arduino loop task (see HANDSHAKE_STACK_BYTES).
  *
  * Every function is defined before its first use: the build stubs out ctags,
  * so the Arduino builder generates no prototypes.
@@ -372,11 +373,17 @@ static bool runHandshake(const char *server, uint8_t key_out[32]) {
     Serial.println("[PQC] ABORT: server offer is unsigned or malformed — possible MITM.");
     return false;
   }
+  // The server signs identity.handshake_transcript(role, ek), which is
+  // b"|".join([b"quantum-iot/v1", role, ek, b""]): the empty ciphertext slot
+  // still contributes its separator, so the offer ends in a '|'. Leaving it
+  // out made every genuine offer fail as "possible MITM" on the first bench
+  // run; tests/test_identity.py pins this layout.
   size_t pl = strlen(TRANSCRIPT_PREFIX);
-  static uint8_t tr[64 + EK_BYTES];
+  static uint8_t tr[64 + EK_BYTES + 1];
   memcpy(tr, TRANSCRIPT_PREFIX, pl);
   memcpy(tr + pl, ek, EK_BYTES);
-  if (PQCLEAN_MLDSA65_CLEAN_crypto_sign_verify(ssig, SIG_BYTES, tr, pl + EK_BYTES, SERVER_PUBLIC) != 0) {
+  tr[pl + EK_BYTES] = '|';
+  if (PQCLEAN_MLDSA65_CLEAN_crypto_sign_verify(ssig, SIG_BYTES, tr, pl + EK_BYTES + 1, SERVER_PUBLIC) != 0) {
     Serial.println("[PQC] ABORT: server signature invalid — possible MITM.");
     return false;
   }
@@ -467,10 +474,24 @@ static void invalidateSession() {
   portEXIT_CRITICAL(&g_mux);
 }
 
+// ML-DSA-65 in PQClean's clean implementation keeps its whole working set on
+// the stack: about 78 KB to sign (the 6x5 matrix alone is 30 KB) and 56 KB to
+// verify, plus the HTTP client above them. The first bench run had 64 KB and
+// overflowed it during verify, which corrupted neighbouring heap: verification
+// "failed" against a correct signature and the interrupt watchdog reset the
+// board. 96 KB leaves ~14 KB headroom; the high-water mark printed after each
+// handshake is the real figure.
+static const uint32_t HANDSHAKE_STACK_BYTES = 96 * 1024;
+static TaskHandle_t g_hs_task = nullptr;
+
 static void handshakeTask(void *) {
   static char server[SERVER_MAX + 1];
   static uint8_t key[32];
-  // Exits when WiFi drops; loop() starts a new task once it is back.
+  for (;;) {
+  // Sleeps until startHandshake() wakes it. The task lives for the whole run:
+  // a 96 KB stack can only be found contiguous at boot, before WiFi fragments
+  // the heap, so it is created once and reused rather than created per attempt.
+  ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
   while (WiFi.status() == WL_CONNECTED) {
     portENTER_CRITICAL(&g_mux);
     uint32_t gen = g_session_gen;
@@ -494,22 +515,27 @@ static void handshakeTask(void *) {
     Serial.println("[PQC] Handshake failed; retrying in 3s.");
     vTaskDelay(pdMS_TO_TICKS(3000));
   }
+  Serial.printf("[PQC] handshake stack headroom %lu B of %lu B\n",
+                (unsigned long)uxTaskGetStackHighWaterMark(NULL), (unsigned long)HANDSHAKE_STACK_BYTES);
   g_handshaking = false;
-  vTaskDelete(NULL);  // done; loop() takes over telemetry
+  }
+}
+
+// Called from setup() before WiFi starts, while the heap is still in one piece.
+static void createHandshakeTask() {
+  if (xTaskCreatePinnedToCore(handshakeTask, "pqc-handshake", HANDSHAKE_STACK_BYTES, NULL, 1,
+                              &g_hs_task, 1) != pdPASS) {
+    g_hs_task = nullptr;
+    Serial.printf("[BOOT] FATAL: no room for the %lu B handshake stack (largest free block %lu B); "
+                  "this node cannot establish a session.\n",
+                  (unsigned long)HANDSHAKE_STACK_BYTES, (unsigned long)ESP.getMaxAllocHeap());
+  }
 }
 
 static void startHandshake() {
-  if (g_handshaking) return;
+  if (g_handshaking || g_hs_task == nullptr) return;
   g_handshaking = true;
-  // 64 KB stack: ML-DSA-65 signing needs ~45 KB, far past the 8 KB loop task.
-  // It is allocated per handshake, so after many reconnects a fragmented heap
-  // can refuse it; say so rather than wait forever on a task that never ran.
-  if (xTaskCreatePinnedToCore(handshakeTask, "pqc-handshake", 64 * 1024, NULL, 1, NULL, 1) != pdPASS) {
-    g_handshaking = false;
-    Serial.printf("[PQC] No room for the 64 KB handshake stack (largest free block %lu B); retrying.\n",
-                  (unsigned long)ESP.getMaxAllocHeap());
-    delay(1000);
-  }
+  xTaskNotifyGive(g_hs_task);
 }
 
 // ---------------------------------------------------------------- lamps -----
@@ -786,6 +812,7 @@ void setup() {
   // persistent(false): the credentials live in our own NVS namespace, so the
   // WiFi driver need not rewrite its copy to flash on every join. Reconnects
   // are ours too (serviceWifi), so the driver's own retry cannot race them.
+  createHandshakeTask();  // before WiFi: see HANDSHAKE_STACK_BYTES
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(false);
