@@ -13,11 +13,11 @@ means XV-101 closes and P-101 stops.
    │ T-100 reservoir (clear)  │   make server  (logic solver, dashboard)
    │                          │       │ TRIP sealed under actuator session key
    │  ┌─────┐       ┌──────┐  │       ▼
-   │  │V-101│◄──────│XV-101│◄─┼── make actuator ── USB ── Nano/Uno ── relay
-   │  │ jar │ feed  │valve │  │                                  CH1 │ CH2
-   │  └──┬──┘       └──▲───┘  │                                      │
-   │     │ overflow    │      │                         XV-101 ◄─────┘
-   │     ▼             │      │                         P-101  ◄───────
+   │  │V-101│◄──────│XV-101│◄─┼── make rig ── USB ── Uno ── relay (one channel)
+   │  │ jar │ feed  │valve │  │                                    │ 12 V
+   │  └──┬──┘       └──▲───┘  │                                    ├──► XV-101
+   │     │ overflow    │      │                                    └──► P-101
+   │     ▼             │      │
    │  water      P-101 pump ──┘
    └──────────────────────────┘
 ```
@@ -52,7 +52,7 @@ which is exactly the default setpoint, so it can never be dunked in V-101.
 | 5 | 12 V solenoid valve | **Normally Closed**, **direct-acting / 0 MPa minimum pressure**, plastic body, barbs that match your tube | ✅ check spec |
 | 6 | 12 V DC submersible pump | brushless DC, ~200–300 L/h, **DC not mains**: an aquarium pump with a 230 V plug is the wrong part | buy |
 | 7 | Clear tubing ~1.5 m | inner diameter = the pump outlet and valve barbs (usually 8 mm). Zip ties for clamps | buy |
-| 8 | **2-channel** 5 V relay module | opto-isolated. One channel for the valve, one for the pump | ✅ if 2-ch, else buy |
+| 8 | 5 V relay module, **one channel is enough** | contacts rated ≥ 10 A / 30 V DC. The pump always follows the valve, so one relay switches both | ✅ |
 | 9 | 12 V DC adapter, **≥ 2 A** | pump ~0.5 A + valve ~0.5 A + headroom | ✅ check rating |
 | 10 | DC barrel jack → screw terminal adapter | so you never cut the adapter lead | buy |
 | 11 | 1N4007 diodes ×2 | 1 A / 1000 V (1N5819 also works). Flyback: one at the valve, one at the pump. The relay module's own diode protects only its coil, not these loads | buy |
@@ -82,9 +82,13 @@ pass.
 | GPIO 18 | MAX6675 SCK |
 | GPIO 19 | MAX6675 SO |
 | GPIO 5 | MAX6675 CS |
-| GPIO 25 → 220 Ω → | green LED anode: **HEALTHY** |
-| GPIO 26 → 220 Ω → | yellow LED anode: **FAULT** (no session, server down, probe failed) |
-| GPIO 27 → 220 Ω → | red LED anode: **TRIPPED** (stays on until signed reset) |
+| GPIO 27 → 220 Ω → | red LED anode: **TRIPPED**, steady, until a signed reset |
+| GPIO 26 → 220 Ω → | red LED anode: **FAULT**, blinking (no WiFi, no session, server down, probe failed) |
+| GPIO 2 | onboard LED: **HEALTHY**. Nothing to wire on most DevKits |
+
+Two LEDs of the same colour work because the fault lamp **blinks** and the
+trip lamp is **steady**. If your board has no onboard LED on GPIO 2, wire a
+green LED to GPIO 25 and set `HEALTHY_LED_PIN` to 25 in `sketch_pqc.ino`.
 
 Power it over USB from the laptop or a power bank. The ESP32 has no wired link
 to the Nano: its only path to the valve is through the server and the actuator
@@ -96,8 +100,11 @@ node, which is the point of the architecture.
 |---|---|
 | 5V | VCC |
 | GND | GND |
-| D2 | IN1: XV-101 |
-| D3 | IN2: P-101 |
+| D2 | IN: XV-101 and P-101 together |
+
+D3 is left unconnected. With one relay for both loads there is a single
+`RELAY_ACTIVE_LOW` setting to get right; two different relay modules can
+trigger on opposite levels.
 
 USB goes to the Mac running `make actuator`. Upload
 `firmware/nano_relay/nano_relay.ino` (board: Arduino Uno or Nano).
@@ -105,10 +112,9 @@ USB goes to the Mac running `make actuator`. Upload
 ### 12 V side: keep it off the breadboard
 
 ```
-adapter +12V ── barrel terminal + ──┬── relay CH1 COM
-                                    └── relay CH2 COM
-relay CH1 NO ── XV-101 (+)     XV-101 (−) ── adapter −
-relay CH2 NO ── P-101  (+)     P-101  (−) ── adapter −
+adapter +12V ── barrel terminal + ─── relay COM
+relay NO ──┬── XV-101 (+)      XV-101 (−) ──┬── adapter −
+           └── P-101  (+)      P-101  (−) ──┘
 D1 1N4007 across XV-101: stripe to (+)
 D2 1N4007 across P-101:  stripe to (+)
 ```
@@ -133,6 +139,21 @@ a diode, the spike circulates through the diode and the coil and dies there.
   adapter cuts out. Check the stripe before powering on.
 - A valve with polarity-marked leads may already contain a diode. A second
   one in the same direction does no harm.
+- The common white ½" valve has **spade terminals** and no polarity: either
+  tab can be +. Use 6.3 mm female spade crimps, or solder, rather than
+  wrapping wire round the tabs.
+
+**The ½" pilot-operated valve.** It needs about 0.02 MPa across it to seal,
+and this pump makes about 0.03 MPa at most, so it is borderline on its own.
+It works here because the relay sketch stops the pump before it closes the
+valve, so the valve never has to hold back a running pump. Check it at
+bring-up step 6d: when the relay drops, the flow must stop within a second.
+
+**Joining the tubes.** The valve's push-fit ends take the blue tube; push it
+in firmly until it seats, and pull the collar to release. The pump outlet
+takes the clear tube. Join clear to blue by pushing the blue tube a few cm
+inside the clear one and zip-tying over the overlap; if they don't fit
+snugly, a barb reducer of the right sizes does it.
 
 - Use **NO** contacts, not NC. A dead Nano, a pulled USB cable or a dead 12 V
   supply then leaves both outputs de-energised, so the valve is spring-closed
