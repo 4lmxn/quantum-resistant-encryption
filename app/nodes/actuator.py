@@ -63,6 +63,10 @@ class SimulatedActuatorNode:
     def establish_session(self, encapsulation_key):
         session_key, kem_ciphertext = encapsulate(encapsulation_key, LINK_ACTUATOR)
         self.key_b = bytearray(session_key)
+        # Beat numbers are per session: a restarted server counts from 1 again,
+        # and a beat sealed under the old key cannot verify under this one, so
+        # the old count would only refuse every genuine beat.
+        self.last_seq = 0
         return kem_ciphertext
 
     def process_command(self, packet):

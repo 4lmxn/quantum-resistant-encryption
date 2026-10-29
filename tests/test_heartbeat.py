@@ -182,6 +182,24 @@ def test_zeroize_wipes_the_session_key():
     raise AssertionError("a zeroized key still decrypted traffic")
 
 
+def test_a_new_session_restarts_the_beat_count():
+    """A restarted server numbers its beats from 1 again. The old count belongs
+    to the old session key: a beat sealed under it cannot verify under the new
+    key, so carrying the count over protects nothing and refuses every genuine
+    beat -- the watchdog then trips forever and undoes every RESET."""
+    from app import pqc
+
+    node = fresh_node()
+    assert node.accept_heartbeat(beat(500)) is True
+
+    encapsulation_key, decapsulation_key = pqc.generate_keypair()
+    ciphertext = node.establish_session(encapsulation_key)
+    new_key = pqc.decapsulate(decapsulation_key, ciphertext, pqc.LINK_ACTUATOR)
+
+    first_beat = sealer.encrypt_actuator_command(new_key, "HEARTBEAT", seq=1)
+    assert node.accept_heartbeat(first_beat) is True, "the new server's first beat was refused"
+
+
 if __name__ == "__main__":
     for name, check in sorted(globals().items()):
         if name.startswith("test_"):
